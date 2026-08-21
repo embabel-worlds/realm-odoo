@@ -42,7 +42,9 @@ its Odoo record, and ships the tests that prove the numbers.
 1. An Odoo 19+ instance with the JSON-2 API (`/json/2/<model>/<method>`). For a demo:
    the official `odoo:19` image + Postgres, database created with demo data.
 2. An API key for the connecting user (Settings → Users → API Keys; scope `rpc`).
-3. `ODOO_API_KEY` available to the appliance (env, or the world's `data/secrets.env`).
+3. `ODOO_API_KEY` in the appliance's environment. On the Docker appliance, put it in
+   `secrets.env` beside the compose file (see `secrets.env.example` there) — the compose
+   passes that whole file into the container, so no compose edit is needed.
 4. The server URL in `apis/odoo-json2.json` (`servers[0].url`) is the one install-specific
    fact here — point it at your Odoo as the APPLIANCE reaches it
    (`host.docker.internal:8069` for a host-local demo). `apps/whole-customer.js` carries the

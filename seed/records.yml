@@ -1,0 +1,30 @@
+# Demo seed for realm-odoo — fictional relationships, real entities (see the realm
+# spec's seed/ section). None of these companies is a customer and none owes anyone
+# anything; their DOMAINS are real, which is what the enrichment joins key on. The
+# shipped fictional customers (Acme, Azure Interior, ...) stay untouched as the
+# honest contrast: a placeholder domain resolves to nothing, and should.
+#
+# Bunnings is here deliberately: it is owned by Wesfarmers, so the parent-chain
+# walk has a real edge to find.
+customers:
+  - name: Atlassian
+    website: https://www.atlassian.com
+    invoices:
+      - { ref: SEED-ATL-1, amount: 84000, description: "Platform advisory retainer" }
+    opportunities:
+      - { name: "SEED Team workflow rollout", expected_revenue: 120000, probability: 65, stage: Proposition }
+  - name: Canva
+    website: https://www.canva.com
+    invoices:
+      - { ref: SEED-CNV-1, amount: 36500, description: "Design systems audit" }
+  - name: Qantas
+    website: https://www.qantas.com
+    invoices:
+      - { ref: SEED-QF-1, amount: 40000, description: "Loyalty analytics engagement" }
+      - { ref: SEED-QF-2, amount: 12750, description: "Follow-on workshop" }
+    opportunities:
+      - { name: "SEED Fleet data platform", expected_revenue: 250000, probability: 30, stage: Qualified }
+  - name: Bunnings
+    website: https://www.bunnings.com.au
+    invoices:
+      - { ref: SEED-BUN-1, amount: 22000, description: "Store network pilot" }
