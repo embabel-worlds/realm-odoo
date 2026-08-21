@@ -1,0 +1,138 @@
+# All four producers speak to Odoo's MIDDLE TIER — search_read through JSON-2 — never the
+# database. `load: ""` is load-bearing on every one: it makes many2one fields come back as bare
+# ids, which is what the joins key on; without it partner_id arrives as an [id, name] pair and
+# every traversal silently matches nothing.
+
+# Open pipeline by stage NAME — the scan door. The anchor key (a stage name, e.g.
+# 'Proposition') is injected into the domain's IN list; echoed back so records join to the
+# anchor that asked.
+- name: leadsByStage
+  kind: api
+  operation: leadsSearchRead
+  records: "$[*]"
+  keyArg: "domain.0.2"
+  echoKeyAs: stageKey
+  args:
+    domain:
+      - ["stage_id.name", "in", []]
+      - ["active", "=", true]
+      # Odoo spells "no partner" as FALSE, not null, and a false key in the batched
+      # LEAD_OF traversal arrives at Postgres as the string 'false' inside an integer
+      # IN-list — a 500. Until the engine drops falsy join keys, this door carries
+      # only partnered leads; the trade is stated here rather than discovered.
+      - ["partner_id", "!=", false]
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed]
+    load: ""
+    limit: 200
+  cache: { kind: ttl, seconds: 300 }
+
+# Customers by id — resolves a lead's partner_id (bare id, thanks to load:"") to the partner
+# record. Batch IN, one call for a whole traversal.
+- name: customersById
+  kind: api
+  # Odoo domain values are TYPED: partner_id in ["9"] matches nothing, silently.
+  keyType: int
+  operation: partnersSearchRead
+  records: "$[*]"
+  keyArg: "domain.0.2"
+  args:
+    domain:
+      - ["id", "in", []]
+    fields: [name, email, phone, city, country_id, is_company]
+    load: ""
+    limit: 200
+  cache: { kind: ttl, seconds: 300 }
+
+# A customer's UNPAID posted customer invoices. Keyed on partner_id; the not_paid/partial
+# filter is the producer's judgment call and is stated here, where a reviewer can see it.
+- name: unpaidInvoicesByPartner
+  kind: api
+  # Odoo domain values are TYPED: partner_id in ["9"] matches nothing, silently.
+  keyType: int
+  operation: invoicesSearchRead
+  records: "$[*]"
+  keyArg: "domain.0.2"
+  # The echoed key, not the raw partner_id, is what joins attribute on — the same
+  # "echo kept for join safety" every shipped API realm relies on.
+  echoKeyAs: partnerKey
+  args:
+    domain:
+      - ["partner_id", "in", []]
+      - ["move_type", "=", "out_invoice"]
+      - ["state", "=", "posted"]
+      - ["payment_state", "in", ["not_paid", "partial"]]
+    fields: [name, partner_id, amount_total, amount_residual, invoice_date_due, payment_state]
+    load: ""
+    limit: 200
+  cache: { kind: ttl, seconds: 300 }
+
+# A customer's sales orders, any state — the state field rides on the record so a query can
+# filter for quotations that stalled versus orders in flight.
+- name: ordersByPartner
+  kind: api
+  # Odoo domain values are TYPED: partner_id in ["9"] matches nothing, silently.
+  keyType: int
+  operation: ordersSearchRead
+  records: "$[*]"
+  keyArg: "domain.0.2"
+  echoKeyAs: partnerKey
+  args:
+    domain:
+      - ["partner_id", "in", []]
+    fields: [name, partner_id, amount_total, state, date_order]
+    load: ""
+    limit: 200
+  cache: { kind: ttl, seconds: 300 }
+
+# ── The book doors: fetch-all producers behind the OdooBook anchor, so questions about
+# the SETS ("how many customers", "who owes most") need no stage literal nobody can know.
+# The anchor key rides in Odoo's free-form context kwarg — the only safe slot, since JSON-2
+# binds kwargs against the method signature and rejects strangers.
+
+- name: customersAll
+  kind: api
+  operation: partnersSearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    domain:
+      - ["customer_rank", ">", 0]
+    fields: [name, email, phone, city, is_company]
+    load: ""
+    limit: 500
+  cache: { kind: ttl, seconds: 300 }
+
+- name: invoicesUnpaidAll
+  kind: api
+  operation: invoicesSearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    domain:
+      - ["move_type", "=", "out_invoice"]
+      - ["state", "=", "posted"]
+      - ["payment_state", "in", ["not_paid", "partial"]]
+    fields: [name, partner_id, amount_total, amount_residual, invoice_date_due, payment_state]
+    load: ""
+    limit: 500
+  cache: { kind: ttl, seconds: 300 }
+
+- name: leadsOpenAll
+  kind: api
+  operation: leadsSearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    domain:
+      - ["active", "=", true]
+      - ["probability", "<", 100]
+      # Partnerless leads excluded here for the same falsy-key reason as leadsByStage:
+      # their partner_id is FALSE, and false inside a downstream integer batch breaks it.
+      - ["partner_id", "!=", false]
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date]
+    load: ""
+    limit: 500
+  cache: { kind: ttl, seconds: 300 }

@@ -1,0 +1,17 @@
+# Odoo JSON-2 (Odoo 19+) — vendored mini-spec, bearer-authenticated.
+#
+# VENDORED AND CURATED, not generated: JSON-2 is one route (`POST /json/2/<model>/<method>`)
+# dispatching into the whole ORM, so "the API" is as wide as the install. This spec pins the
+# handful of operations the realm's producers actually use, each as its own path so it carries
+# its own operationId and typed body. Widening the surface is `skills/odoo-extension` work,
+# done against the customer's install, not here.
+#
+# Auth: an Odoo API key as a bearer token (Settings -> Users -> API Keys). One deployment-level
+# key in ODOO_API_KEY; the spec's bearer scheme tells the learner to inject it. The server URL
+# in the spec is the demo deployment's; a real install edits it — it is the one install-specific
+# fact this realm carries.
+- url: odoo-json2.json
+  name: odoo
+  type: openapi
+  auth: bearer
+  token-env: ODOO_API_KEY

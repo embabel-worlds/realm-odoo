@@ -1,0 +1,42 @@
+# The natural-language battery — the questions a person will actually type, generated from the
+# realm's shape (counts, superlatives, statuses, windows, synonyms) and extended by USERS with
+# every question that ever disappointed them. Each is a permanent regression test; the runner
+# is tests/verify.sh. Money and count questions assert matchesView: the NL answer must equal
+# the curated view's figure — reconciliation without literals to rot.
+
+- question: "How many customers do we have"
+  expect: { matchesView: { name: OdooCustomerCount, column: customers } }
+- question: "Which customers owe us most money"
+  expect: { matchesView: { name: OdooReceivablesByCustomer, column: totalOwed } }
+- question: "which is our most valuable customer"
+  expect: { matchesView: { name: OdooReceivablesByCustomer, column: totalOwed } }
+- question: "total outstanding receivables per client"
+  expect: { matchesView: { name: OdooReceivablesByCustomer, column: totalOwed } }
+- question: "what is our biggest win"
+  expect: { matchesView: { name: OdooWins, column: value } }
+# The demo's wins all close on install day (today), so LAST quarter is honestly empty —
+# demanding rows here failed the harness the moment the selector learned to bind calendar
+# quarters precisely. THIS quarter contains them, and reconciles against the all-time view
+# top because the demo has no earlier wins to differ by.
+- question: "what was our biggest win this quarter"
+  expect: { matchesView: { name: OdooWins, column: value } }
+- question: "what was our biggest win of the last quarter"
+  expect: { minRows: 0 }   # honest empty; asserts the ask runs without error
+- question: "what deals have we won"
+  expect: { nonEmpty: true }
+- question: "show me our open opportunities"
+  expect: { nonEmpty: true }
+- question: "what is our biggest open opportunity"
+  expect: { matchesView: { name: OdooOpenPipeline, column: expectedRevenue } }
+- question: "who still hasn't paid us"
+  expect: { nonEmpty: true }
+- question: "how many unpaid invoices are there"
+  expect: { nonEmpty: true }
+- question: "which opportunities are at the Proposition stage"
+  expect: { nonEmpty: true }
+- question: "what are the 10 biggest outstanding invoices"
+  expect: { matchesView: { name: OdooOutstandingInvoices, column: owed } }
+- question: "largest unpaid invoices"
+  expect: { matchesView: { name: OdooOutstandingInvoices, column: owed } }
+- question: "what are our 10 biggest opportunities over 60%"
+  expect: { matchesView: { name: OdooOpenPipeline, column: expectedRevenue, args: { minProbability: 60 } } }

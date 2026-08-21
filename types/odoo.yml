@@ -1,0 +1,118 @@
+# The core CRM/sales/invoicing surface, typed from what the ORM ITSELF declares (fields_get):
+# every relation below is a declared many2one, not a guessed join. Field descriptions borrow
+# Odoo's own labels and help text. EVERY type is virtual — nothing is mirrored; a traversal
+# fetches through the middle tier at query time.
+#
+#   MATCH (q:OdooStagePipeline {stage:'Proposition'})-[:HAS_LEAD]->(l:OdooLead)
+#   OPTIONAL MATCH (l)-[:LEAD_OF]->(c:OdooCustomer)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
+#   RETURN c.name, l.name, l.expected_revenue, i.name, i.amount_residual
+
+- name: OdooStagePipeline
+  visibility: internal
+  description: >-
+    The open pipeline at one CRM stage, pinned by the stage's NAME exactly as Odoo shows it
+    ('New', 'Qualified', 'Proposition', 'Won'). Pin it with a literal and traverse HAS_LEAD;
+    it is not stored and does not need to exist.
+  properties:
+    stage: { metadata: { identity: "true" } }
+
+- name: OdooLead
+  visibility: internal
+  description: >-
+    A CRM lead/opportunity. expected_revenue and probability are Odoo's own pipeline figures;
+    partner_id is the linked customer (bare id) when the lead has been connected to one.
+  properties:
+    id: { metadata: { identity: "true" } }
+    name: "The opportunity's title."
+    partner_id: "Linked partner id (Odoo: 'Contact' — usually set when converting the lead)."
+    expected_revenue: "Expected Revenue, in company currency."
+    probability: "Probability percent; 100 on won, 0 on lost."
+    email_from: "Email of the contact the lead came from."
+    stage_id: "Stage id."
+    create_date: "When the lead was created."
+    date_closed: "When the opportunity was won or lost (set on close)."
+    stageKey: "Echo of the stage name this lead was fetched under."
+    scopeKey: "Echo of the book scope this lead was fetched under."
+  virtualJoins:
+    - { anchorLabel: OdooBook, relationship: HAS_OPEN_LEAD, keyField: scope,
+        recordKeyField: scopeKey, producer: leadsOpenAll,
+        description: "Every open opportunity on the book, any stage." }
+    - { anchorLabel: OdooStagePipeline, relationship: HAS_LEAD, keyField: stage,
+        recordKeyField: stageKey, producer: leadsByStage,
+        description: "Every active lead sitting at this pipeline stage." }
+
+- name: OdooCustomer
+  visibility: internal
+  description: >-
+    A partner (res.partner) — a customer, contact or company. email is the bridge field: on a
+    Me appliance this is where a Person-spine join would anchor.
+  properties:
+    id: { metadata: { identity: "true" } }
+    name: "Display name."
+    email: "Email address."
+    phone: "Phone."
+    city: "City."
+    country_id: "Country id."
+    is_company: "True for companies, false for individuals."
+    scopeKey: "Echo of the book scope this customer was fetched under."
+  virtualJoins:
+    - { anchorLabel: OdooBook, relationship: HAS_CUSTOMER, keyField: scope,
+        recordKeyField: scopeKey, producer: customersAll,
+        description: "Every customer on the book (customer_rank > 0)." }
+    - { anchorLabel: OdooLead, relationship: LEAD_OF, keyField: partner_id, recordKeyField: id,
+        producer: customersById, description: "The customer an opportunity belongs to." }
+
+- name: OdooInvoice
+  visibility: internal
+  description: "A posted, not-fully-paid customer invoice. amount_residual is what is still owed; invoice_date_due is when it was due."
+  properties:
+    id: { metadata: { identity: "true" } }
+    name: "Invoice number."
+    partner_id: "Customer id."
+    amount_total: "Invoice total."
+    amount_residual: "Amount still owed."
+    invoice_date_due: "Due date."
+    payment_state: "not_paid or partial."
+    partnerKey: "Echo of the partner id this invoice was fetched under."
+    scopeKey: "Echo of the book scope this invoice was fetched under."
+  virtualJoins:
+    - { anchorLabel: OdooBook, relationship: HAS_UNPAID_INVOICE, keyField: scope,
+        recordKeyField: scopeKey, producer: invoicesUnpaidAll,
+        description: "Every posted, unpaid customer invoice on the book." }
+    - { anchorLabel: OdooCustomer, relationship: HAS_UNPAID_INVOICE, keyField: id,
+        recordKeyField: partnerKey, producer: unpaidInvoicesByPartner,
+        description: "Posted customer invoices not fully paid." }
+    # Same records, anchored one hop EARLIER: lead and invoice both carry partner_id, so the
+    # pipeline question reaches invoices at depth 2 (a branch off the lead) instead of a
+    # depth-3 chain — which the engine currently loses silently (platform issue; see realm
+    # notes). Same producer, same filter, stated twice on purpose.
+    - { anchorLabel: OdooLead, relationship: CUSTOMER_OWES, keyField: partner_id,
+        recordKeyField: partnerKey, producer: unpaidInvoicesByPartner,
+        description: "Unpaid invoices of the customer this lead belongs to." }
+
+- name: OdooOrder
+  visibility: internal
+  description: "A sales order or quotation. state is draft/sent (quotation), sale (confirmed), done, or cancel."
+  properties:
+    id: { metadata: { identity: "true" } }
+    name: "Order reference."
+    partner_id: "Customer id."
+    amount_total: "Order total."
+    state: "draft, sent, sale, done, or cancel."
+    date_order: "Order date."
+    partnerKey: "Echo of the partner id this order was fetched under."
+  virtualJoins:
+    - { anchorLabel: OdooCustomer, relationship: HAS_ORDER, keyField: id,
+        recordKeyField: partnerKey, producer: ordersByPartner,
+        description: "Sales orders and quotations, any state." }
+
+- name: OdooBook
+  visibility: internal
+  description: >-
+    The whole Odoo book, pinned by the LITERAL scope 'all' — always write
+    MATCH (b:OdooBook {scope:'all'}) and traverse. HAS_CUSTOMER reaches every customer,
+    HAS_UNPAID_INVOICE every posted unpaid customer invoice, HAS_OPEN_LEAD every open
+    opportunity. This is the door for questions about the sets: how many customers, who
+    owes most, total pipeline. It is not stored and does not need to exist.
+  properties:
+    scope: { metadata: { identity: "true", default: "all" } }

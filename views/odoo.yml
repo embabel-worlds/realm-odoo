@@ -1,0 +1,140 @@
+# The realm's answer surface. The flagship view is the cross-module question Odoo's own UI —
+# and its Enterprise "Ask AI" — cannot compose: pipeline and receivables in one gaze, per
+# customer. Verified live against Odoo 19 demo data (Acme: $11k pipeline, $130k+ owed).
+
+- name: OdooPipelineReceivables
+  description: >-
+    Every open opportunity at a CRM stage, with the customer it belongs to and every posted,
+    unpaid invoice that customer still owes. One row per (opportunity, invoice); an opportunity
+    whose customer owes nothing appears once with null invoice columns. The question this
+    answers: "who are we trying to sell MORE to while they still owe us money?"
+  outputLabel: PipelineReceivablesRow
+  params:
+    stage:
+      type: string
+      default: "Proposition"
+      description: "The CRM stage name exactly as Odoo shows it: New, Qualified, Proposition, Won."
+    limit:
+      type: int
+      default: 50
+      description: "Maximum rows."
+  cypher: |
+    MATCH (q:OdooStagePipeline {stage: $stage})-[:HAS_LEAD]->(l:OdooLead)-[:LEAD_OF]->(c:OdooCustomer)
+    OPTIONAL MATCH (c)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
+    RETURN c.id                AS customerId,
+           c.name              AS customer,
+           c.email             AS email,
+           l.id                AS leadId,
+           l.name              AS opportunity,
+           l.expected_revenue  AS pipeline,
+           l.probability       AS probability,
+           i.id                AS invoiceId,
+           i.name              AS invoice,
+           i.amount_residual   AS owed,
+           i.invoice_date_due  AS due
+    ORDER BY customer, owed DESC
+    LIMIT $limit
+
+- name: OdooReceivablesByCustomer
+  description: >-
+    Which customers owe us money, most first: one row per customer with the count of posted
+    unpaid invoices and the exact total still owed. THE answer for "who owes us most",
+    "our most valuable customer by outstanding balance", "total receivables per customer".
+    Grouping is by customer id, so duplicate names and duplicate invoice names cannot
+    inflate or merge anything.
+  outputLabel: ReceivablesRow
+  params:
+    limit:
+      type: int
+      default: 50
+      description: "Maximum customers."
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_CUSTOMER]->(c:OdooCustomer)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
+    WITH c, count(i) AS unpaidInvoices, sum(i.amount_residual) AS totalOwed
+    RETURN c.id AS customerId, c.name AS customer, c.email AS email, unpaidInvoices, totalOwed
+    ORDER BY totalOwed DESC
+    LIMIT $limit
+
+- name: OdooOpenPipeline
+  description: >-
+    The open pipeline: every open opportunity with its customer, stage and expected revenue,
+    highest value first. THE answer for "what deals are open", "pipeline by customer",
+    "biggest open opportunities" — including probability-filtered forms ("over 60%",
+    "likely to close") via minProbability.
+  outputLabel: PipelineRow
+  params:
+    minProbability:
+      type: int
+      default: 0
+      description: "Only opportunities at or above this win probability percent (e.g. 60)."
+    limit:
+      type: int
+      default: 100
+      description: "Maximum opportunities."
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_OPEN_LEAD]->(l:OdooLead)
+    WHERE l.probability >= $minProbability
+    OPTIONAL MATCH (l)-[:LEAD_OF]->(c:OdooCustomer)
+    RETURN l.id AS leadId, l.name AS opportunity, c.id AS customerId, c.name AS customer,
+           l.expected_revenue AS expectedRevenue, l.probability AS probability
+    ORDER BY expectedRevenue DESC
+    LIMIT $limit
+
+- name: OdooWins
+  description: >-
+    Deals WON, biggest first: each won opportunity with its customer, value and close date.
+    THE answer for "our biggest win", "what did we win last quarter/month", "recent wins",
+    "deals closed won". Pass since/until as ISO dates (e.g. '2026-04-01') to window by close
+    date; omit them for all time.
+  outputLabel: WinRow
+  params:
+    since:
+      type: string
+      default: ""
+      description: "Earliest close date, ISO (inclusive). Empty = no lower bound."
+    until:
+      type: string
+      default: ""
+      description: "Latest close date, ISO (inclusive day; compares as string). Empty = no upper bound."
+    limit:
+      type: int
+      default: 20
+      description: "Maximum wins."
+  cypher: |
+    MATCH (q:OdooStagePipeline {stage:'Won'})-[:HAS_LEAD]->(l:OdooLead)
+    WHERE ($since = '' OR l.date_closed >= $since)
+      AND ($until = '' OR l.date_closed <= $until + '~')
+    OPTIONAL MATCH (l)-[:LEAD_OF]->(c:OdooCustomer)
+    RETURN l.id AS leadId, l.name AS win, c.id AS customerId, c.name AS customer,
+           l.expected_revenue AS value, l.date_closed AS closedOn
+    ORDER BY value DESC
+    LIMIT $limit
+
+- name: OdooCustomerCount
+  description: >-
+    How many customers are on the book — one row, one number. THE answer for "how many
+    customers do we have", "number of clients/accounts".
+  outputLabel: CustomerCountRow
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_CUSTOMER]->(c:OdooCustomer)
+    RETURN count(DISTINCT c) AS customers
+
+- name: OdooOutstandingInvoices
+  description: >-
+    The outstanding invoices themselves, biggest first: each posted unpaid customer invoice
+    with its customer, amount still owed and due date. THE answer for "biggest outstanding
+    invoices", "largest unpaid invoices", "top overdue invoices", "which invoices are open".
+  outputLabel: OutstandingInvoiceRow
+  params:
+    limit:
+      type: int
+      default: 10
+      description: "How many invoices."
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
+    OPTIONAL MATCH (b)-[:HAS_CUSTOMER]->(c:OdooCustomer)
+    WHERE c.id = toString(i.partner_id)
+    RETURN i.id AS invoiceId, i.name AS invoice, c.id AS customerId, c.name AS customer,
+           i.amount_residual AS owed, i.invoice_date_due AS due, i.payment_state AS status
+    ORDER BY owed DESC
+    LIMIT $limit
