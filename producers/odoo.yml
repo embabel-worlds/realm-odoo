@@ -139,3 +139,23 @@
     load: ""
     limit: 500
   cache: { kind: ttl, seconds: 300 }
+
+# A lead's chatter — the emails and comments on the opportunity, which is where the actual
+# state of a deal lives (the stage field says Proposition; the thread says the customer has
+# gone quiet). Comments and emails only: tracking notes ("Stage changed") are noise to a
+# reader and poison to a sentiment judge.
+- name: messagesByLead
+  kind: api
+  keyType: int
+  operation: messagesSearchRead
+  records: "$[*]"
+  keyArg: "domain.1.2"
+  echoKeyAs: leadKey
+  args:
+    domain:
+      - ["model", "=", "crm.lead"]
+      - ["res_id", "in", []]
+      - ["message_type", "in", ["comment", "email"]]
+    fields: [res_id, body, date, author_id, subject, message_type]
+    load: ""
+    limit: 200

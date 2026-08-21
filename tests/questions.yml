@@ -54,3 +54,6 @@
   expect: { nonEmpty: true }
 - question: "who ultimately owns the companies that owe us money"
   expect: { matchesView: { name: OdooDebtorOwnership, column: totalOwed } }
+# News is volatile by nature — the assertion is attribution and presence, not a figure.
+- question: "what's in the news about the companies that owe us money"
+  expect: { nonEmpty: true }

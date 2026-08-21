@@ -84,12 +84,21 @@ for c in records["customers"]:
         call("account.move", "action_post", {"ids": [mid]})
         print(f"  created+posted invoice {inv['ref']} ({inv['amount']})")
     for opp in c.get("opportunities", []):
-        if one("crm.lead", [["name", "=", opp["name"]]]):
-            print(f"  opportunity '{opp['name']}' already present"); continue
-        call("crm.lead", "create", {"vals_list": [{
-            "name": opp["name"], "partner_id": pid, "type": "opportunity",
-            "expected_revenue": opp["expected_revenue"], "probability": opp["probability"],
-            "stage_id": stages[opp["stage"]],
-        }]})
-        print(f"  created opportunity '{opp['name']}'")
+        lead = one("crm.lead", [["name", "=", opp["name"]]])
+        if lead:
+            lid = lead["id"]; print(f"  opportunity '{opp['name']}' already present")
+        else:
+            lid = call("crm.lead", "create", {"vals_list": [{
+                "name": opp["name"], "partner_id": pid, "type": "opportunity",
+                "expected_revenue": opp["expected_revenue"], "probability": opp["probability"],
+                "stage_id": stages[opp["stage"]],
+            }]})[0]
+            print(f"  created opportunity '{opp['name']}'")
+        # Chatter, posted through the same message_post every Odoo user goes through, so the
+        # thread reads exactly as if someone typed it. Idempotent on the message text.
+        for note in opp.get("notes", []):
+            if one("mail.message", [["model", "=", "crm.lead"], ["res_id", "=", lid], ["body", "like", note[:60]]]):
+                print(f"    note already present: {note[:40]}..."); continue
+            call("crm.lead", "message_post", {"ids": [lid], "body": note, "message_type": "comment"})
+            print(f"    posted note: {note[:40]}...")
 PY

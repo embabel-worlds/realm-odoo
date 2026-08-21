@@ -159,4 +159,37 @@ sys.exit(1 if bad else 0)
 PYEOF
 fi
 
+echo "== L7: the AI layer judges what the seed planted =="
+# A model's opinion has no cents, so this leg does not reconcile figures — it asserts the
+# envelope, the label vocabulary, and the two seeded chatter arcs, which were WRITTEN to be
+# unambiguous: a judge that cannot read "budget approved" as positive is broken, not subtle.
+LENS=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/lenses/deal-triage/invoke" \
+  -H 'Content-Type: application/json' -d '{"args":{}}')
+LENS="$LENS" python3 - <<'PYEOF' || fail=1
+import json, os, sys
+d = json.loads(os.environ['LENS'])
+bad = 0
+def check(name, ok, detail=""):
+    global bad
+    print(("  ok   " if ok else "  FAIL ") + name + (f" ({detail})" if detail and not ok else ""))
+    if not ok: bad += 1
+check("lens invocation succeeded", d.get("status") == "SUCCEEDED", str(d)[:150])
+data = d.get("data")
+if isinstance(data, str):
+    try: data = json.loads(data)
+    except Exception: data = {}
+rows = (data or {}).get("rows") or []
+check("triage rows returned", len(rows) > 0)
+check("triage labels stay in vocabulary",
+      all(r.get("triage") in ("strategic", "standard", "at_risk") for r in rows))
+check("sentiment labels stay in vocabulary",
+      all(r.get("sentiment") in ("positive", "neutral", "negative", None) for r in rows))
+by = {r.get("deal"): r for r in rows}
+atl, qf = by.get("SEED Team workflow rollout") or {}, by.get("SEED Fleet data platform") or {}
+check("seeded negative arc reads negative (Atlassian)", atl.get("sentiment") == "negative", str(atl))
+check("seeded positive arc reads positive (Qantas)", qf.get("sentiment") == "positive", str(qf))
+check("negative thread outweighs a 65% probability (at_risk)", atl.get("triage") == "at_risk", str(atl))
+sys.exit(1 if bad else 0)
+PYEOF
+
 [ "$fail" = 0 ] && echo "ALL CHECKS PASS" || { echo "DRIFT DETECTED"; exit 1; }

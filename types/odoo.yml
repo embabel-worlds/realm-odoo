@@ -117,3 +117,23 @@
     owes most, total pipeline. It is not stored and does not need to exist.
   properties:
     scope: { metadata: { identity: "true", default: "all" } }
+
+# A chatter message on an opportunity. Body arrives as HTML, as Odoo stores it — a consumer
+# doing judgment (sentiment, classification) should strip tags first, not ask the model to.
+- name: OdooMessage
+  userAnchor: false
+  description: |
+    An email or comment from an opportunity's chatter thread, newest state of the deal in
+    the participants' own words. Tracking entries are excluded at the producer.
+  properties:
+    id:
+      identity: true
+      description: "Odoo mail.message id."
+    body: "Message body, as HTML."
+    date: "When it was sent (UTC)."
+    subject: "Subject, when the message was an email."
+    message_type: "comment (internal note / log) or email."
+  virtualJoins:
+    - { anchorLabel: OdooLead, relationship: HAS_MESSAGE, keyField: id, recordKeyField: leadKey,
+        producer: messagesByLead,
+        description: "The opportunity's chatter thread — recent interactions on the deal." }

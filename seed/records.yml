@@ -12,7 +12,14 @@ customers:
     invoices:
       - { ref: SEED-ATL-1, amount: 84000, description: "Platform advisory retainer" }
     opportunities:
-      - { name: "SEED Team workflow rollout", expected_revenue: 120000, probability: 65, stage: Proposition }
+      - name: "SEED Team workflow rollout"
+        expected_revenue: 120000
+        probability: 65
+        stage: Proposition
+        # Chatter with a deliberate negative arc, so sentiment judgment has a real signal.
+        notes:
+          - "Call with procurement: pricing pushback on the rollout tier. They want 20% off or they pause."
+          - "Legal review stuck for three weeks now. Champion has stopped replying to email."
   - name: Canva
     website: https://www.canva.com
     invoices:
@@ -23,7 +30,14 @@ customers:
       - { ref: SEED-QF-1, amount: 40000, description: "Loyalty analytics engagement" }
       - { ref: SEED-QF-2, amount: 12750, description: "Follow-on workshop" }
     opportunities:
-      - { name: "SEED Fleet data platform", expected_revenue: 250000, probability: 30, stage: Qualified }
+      - name: "SEED Fleet data platform"
+        expected_revenue: 250000
+        probability: 30
+        stage: Qualified
+        # Positive arc — the counterweight the classifier should separate from Atlassian's.
+        notes:
+          - "Great workshop with the ops team — they want to expand scope to include loyalty data."
+          - "CTO confirmed budget approved for phase one. Asked us to send the SOW this week."
   - name: Bunnings
     website: https://www.bunnings.com.au
     invoices:

@@ -274,6 +274,57 @@
      }
     }
    }
+  },
+  "/json/2/mail.message/search_read": {
+   "post": {
+    "operationId": "messagesSearchRead",
+    "summary": "Search and read chatter messages (mail.message)",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "domain": {
+          "type": "array",
+          "items": {},
+          "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
+         },
+         "fields": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "limit": {
+          "type": "integer"
+         },
+         "load": {
+          "type": "string",
+          "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Matching records",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "type": "object"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
   }
  }
 }

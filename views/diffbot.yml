@@ -37,3 +37,20 @@
     RETURN c.id AS customerId, c.name AS debtor, totalOwed,
            d.ultimateParentName AS ultimateOwner, toInteger(d.nbEmployees) AS employees
     ORDER BY totalOwed DESC
+
+- name: OdooDebtorNews
+  description: |
+    What is happening to the companies that owe us money: every Diffbot-resolved debtor with
+    what they owe and the last month's headlines about them. Answers "news about our
+    debtors", "what's happening to our biggest debtor", "any risk signals on our
+    receivables". Gated through the Diffbot hop so a fictional customer's name never
+    attracts a real company's headlines.
+  outputLabel: Debtor news
+  cypher: |
+    MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
+    WITH c, sum(i.amount_residual) AS totalOwed
+    MATCH (c)-[:HAS_DIFFBOT_ORG]->(d:DiffbotOrganization)
+    MATCH (c)-[:HAS_NEWS]->(n:NewsItem)
+    RETURN c.id AS customerId, c.name AS debtor, totalOwed,
+           n.title AS headline, n.age AS age, n.url AS url
+    ORDER BY totalOwed DESC
