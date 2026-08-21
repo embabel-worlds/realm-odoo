@@ -6,6 +6,8 @@ views that answer the questions people actually type, a natural-language surface
 those views, an app with per-record links back into Odoo, and a shipped regression battery that
 reconciles every figure against the source.
 
+**[What you can ask it](EXAMPLES.md)** — real questions, where each answer comes from, and the
+verbatim answers from the demo book.
 **[How it works](HOW-IT-WORKS.md)** — the mechanism layer by layer, with the actual queries.
 
 The demo sentence, answered across modules no Odoo screen composes:
