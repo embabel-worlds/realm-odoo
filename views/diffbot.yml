@@ -54,3 +54,58 @@
     RETURN c.id AS customerId, c.name AS debtor, totalOwed,
            n.title AS headline, n.age AS age, n.url AS url
     ORDER BY totalOwed DESC
+
+- name: OdooMeetingBriefing
+  description: |
+    Meeting preparation: for each upcoming calendar meeting, who you are meeting, what they
+    owe (exact), the open deals with win odds and how their chatter threads read, who
+    ultimately owns them, recent news — and a composed 4-6 sentence briefing. Answers "prep
+    me for my meeting with X", "brief me on my upcoming meetings", "what do I need to know
+    before my meetings". The customer parameter narrows to one counterparty by name.
+  outputLabel: Meeting briefing
+  params:
+    customer:
+      type: string
+      default: ""
+      description: "Only meetings whose counterparty name contains this (case-insensitive). Empty = all upcoming."
+  # The figures (owed, unpaidInvoices) are computed by the query and travel BESIDE the prose;
+  # the harness reconciles them to the cent. synthesize() composes the briefing from the
+  # assembled fact text only. News is attributed only through the Diffbot hop — a fictional
+  # customer's name must not attract a real company's headlines. (This view's shape found a
+  # real engine defect: the final-anchor cut probed with an alias earlier WITH stages had
+  # consumed, poisoning the transaction — fixed and pinned in FinalAnchorCutTest.)
+  cypher: |
+    MATCH (b:OdooBook)-[:HAS_MEETING]->(m:OdooMeeting)-[:MEETING_WITH]->(c:OdooCustomer)
+    WHERE m.start >= toString(date()) AND toLower(c.name) CONTAINS toLower($customer)
+    OPTIONAL MATCH (c)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
+    WITH b, m, c, count(DISTINCT i) AS unpaid, coalesce(sum(i.amount_residual),0) AS owed
+    OPTIONAL MATCH (b)-[:HAS_OPEN_LEAD]->(l:OdooLead)-[:LEAD_OF]->(c)
+    OPTIONAL MATCH (l)-[:HAS_MESSAGE]->(msg:OdooMessage)
+    WITH m, c, unpaid, owed, l, collect(DISTINCT msg.body) AS bodies
+    WITH m, c, unpaid, owed,
+         collect(DISTINCT CASE WHEN l IS NULL THEN NULL ELSE
+           'open deal "' + l.name + '": $' + coalesce(toString(l.expected_revenue),'?') +
+           ' at ' + coalesce(toString(l.probability),'?') + '% win probability' +
+           CASE WHEN size(bodies) > 0
+                THEN ' -- thread: ' + reduce(s = '', x IN bodies[0..4] | s + ' | ' + coalesce(x,''))
+                ELSE ' -- no recent thread' END
+         END) AS dealFacts
+    OPTIONAL MATCH (c)-[:HAS_DIFFBOT_ORG]->(d:DiffbotOrganization)
+    OPTIONAL MATCH (c)-[:HAS_NEWS]->(n:NewsItem)
+    WITH m, c, unpaid, owed, dealFacts, d,
+         collect(DISTINCT CASE WHEN d IS NULL THEN NULL ELSE n.title END)[0..3] AS headlines
+    WITH m, c, unpaid, owed,
+         'Meeting: ' + m.name + ' on ' + m.start + ' with ' + c.name + '. ' +
+         CASE WHEN owed > 0 THEN 'They owe us $' + toString(owed) + ' across ' + toString(unpaid) + ' unpaid invoice(s). '
+              ELSE 'They have no unpaid invoices. ' END +
+         CASE WHEN size(dealFacts) = 0 THEN 'No open deals. ' ELSE reduce(s = '', f IN dealFacts | s + f + ' ') END +
+         CASE WHEN d IS NULL THEN 'No firmographics resolved for this customer. '
+              ELSE 'Company: ' + coalesce(toString(d.nbEmployees),'?') + ' employees' +
+                   coalesce(', ultimately owned by ' + d.ultimateParentName, '') + '. ' END +
+         CASE WHEN size(headlines) = 0 THEN 'No recent news found.'
+              ELSE 'Recent news: ' + reduce(s = '', h IN headlines | s + coalesce(h,'') + '; ') END
+         AS factText
+    RETURN m.id AS meetingId, m.name AS meeting, m.start AS starts,
+           c.id AS customerId, c.name AS customer, owed, unpaid AS unpaidInvoices,
+           synthesize(factText, 'a meeting briefing for the salesperson attending: 4-6 sentences of plain prose, using ONLY these facts, never inventing or softening; if news is present mention the most relevant item; end with the one thing to raise') AS briefing
+    ORDER BY starts

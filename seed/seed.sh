@@ -67,6 +67,25 @@ if REMOVE:
 
 stages = {s["name"]: s["id"] for s in call("crm.stage", "search_read", {"domain": [], "fields": ["id", "name"], "load": ""})}
 
+def seed_meetings():
+    from datetime import datetime, timedelta, timezone
+    for m in records.get("meetings", []):
+        if one("calendar.event", [["name", "=", m["name"]]]):
+            print(f"meeting '{m['name']}' already present"); continue
+        p = one("res.partner", [["name", "=", m["customer"]]])
+        if not p:
+            print(f"meeting '{m['name']}': partner {m['customer']} missing, skipped"); continue
+        day = datetime.now(timezone.utc) + timedelta(days=m["start_in_days"])
+        start = day.replace(hour=10, minute=0, second=0, microsecond=0)
+        call("calendar.event", "create", {"vals_list": [{
+            "name": m["name"],
+            "start": start.strftime("%Y-%m-%d %H:%M:%S"),
+            "stop": (start + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"),
+            "partner_ids": [[6, 0, [p["id"]]]],
+        }]})
+        print(f"created meeting '{m['name']}' on {start.date()}")
+
+
 for c in records["customers"]:
     p = one("res.partner", [["name", "=", c["name"]]])
     if p:
@@ -101,4 +120,6 @@ for c in records["customers"]:
                 print(f"    note already present: {note[:40]}..."); continue
             call("crm.lead", "message_post", {"ids": [lid], "body": note, "message_type": "comment"})
             print(f"    posted note: {note[:40]}...")
+
+seed_meetings()
 PY

@@ -6,6 +6,8 @@ views that answer the questions people actually type, a natural-language surface
 those views, an app with per-record links back into Odoo, and a shipped regression battery that
 reconciles every figure against the source.
 
+**[How it works](HOW-IT-WORKS.md)** — the mechanism layer by layer, with the actual queries.
+
 The demo sentence, answered across modules no Odoo screen composes:
 
 > Which customers have an open opportunity — and what do they still owe us?
@@ -27,6 +29,16 @@ its Odoo record, and ships the tests that prove the numbers.
 - `views/` — the answer surface: receivables per customer, outstanding invoices, open
   pipeline (probability-filterable), wins (date-windowable), customer count. Aggregation and
   identity-keyed dedupe live HERE, tested once. Every entity column travels with its id.
+  Cross-realm views join the book to Diffbot firmographics (debtor ownership — "who
+  ultimately owns the companies that owe us money") and to live news, gated through the
+  Diffbot hop so a fictional customer never attracts a real company's headlines. And
+  `OdooMeetingBriefing` is the AI layer in-query: one Virtual Cypher statement walks meeting
+  → attendees → debt → deals → chatter → firmographics → news and `synthesize()`s a briefing
+  per meeting, exact figures beside the prose.
+- `lenses/deal-triage.yml` — classification where one query can't judge: every open deal
+  triaged strategic/standard/at_risk, sentiment read from its own chatter thread.
+- `seed/` — a demo book of REAL companies with fictional debts, deals, chatter arcs and
+  meetings, created through Odoo's own API; gated, idempotent, removable.
 - `apps/whole-customer.*` — pipeline × receivables per customer in Odoo's visual idiom, with
   an AI read grounded on each card's rows, an Ask box showing the generated Virtual Cypher,
   and the `<x>Id` linking convention: names jump to cards or open the record in Odoo.
@@ -68,8 +80,9 @@ parameter, and all sixteen battery questions pass — money ones equal to their 
 - **Read-only by design (v1)**: no `create`/`write` verbs yet. When they come, they go
   through the API — record rules, chatter and computed fields are ORM-enforced, and a write
   around the middle tier is a defect, not a shortcut.
-- **Known boundaries**: leads without a partner are excluded from partner-joined doors (the
-  falsy-key trade, stated in the producer); Odoo demo data genuinely contains duplicate
+- **Known boundaries**: leads without a partner are excluded from partner-joined doors
+  (Odoo spells "no partner" as `false`; the engine now drops such keys at the seam, and the
+  producer's domain filter also skips the wasted fetch); Odoo demo data genuinely contains duplicate
   invoice NAMES with distinct ids — everything here keys on ids, which is why that is
   visible rather than silently merged.
 

@@ -159,3 +159,35 @@
     fields: [res_id, body, date, author_id, subject, message_type]
     load: ""
     limit: 200
+
+# ── The preparation surface: meetings and scheduled next-actions, behind the book door
+# like every other set. This is data Odoo shows one record at a time; the point of having
+# it here is composing it with everything else in one breath.
+
+- name: meetingsAll
+  kind: api
+  operation: calendarSearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    domain: []
+    # partner_ids is the attendee list — a many2many, so it arrives as an id LIST even
+    # under load:"" — which is exactly what the per-element MEETING_WITH join wants.
+    fields: [name, start, stop, location, description, partner_ids]
+    load: ""
+    limit: 200
+  cache: { kind: ttl, seconds: 300 }
+
+- name: activitiesAll
+  kind: api
+  operation: activitySearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    domain: []
+    fields: [res_model, res_id, res_name, summary, date_deadline, user_id]
+    load: ""
+    limit: 500
+  cache: { kind: ttl, seconds: 300 }

@@ -192,4 +192,34 @@ check("negative thread outweighs a 65% probability (at_risk)", atl.get("triage")
 sys.exit(1 if bad else 0)
 PYEOF
 
+echo "== L8: meeting briefings (virtual cypher + synthesize) — figures reconcile beside the prose =="
+# The briefing's PROSE is a model's composition and is asserted present, never parsed. The
+# FIGURES travel beside it as columns and reconcile exactly against the receivables view —
+# a briefing that narrates one number while its row carries another is drift, whoever wrote it.
+PREP=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooMeetingBriefing/invoke" \
+  -H 'Content-Type: application/json' -d '{"args":{}}')
+RECV=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooReceivablesByCustomer/invoke" \
+  -H 'Content-Type: application/json' -d '{"args":{}}')
+PREP="$PREP" RECV="$RECV" python3 - <<'PYEOF' || fail=1
+import json, os, sys
+d = json.loads(os.environ['PREP'])
+recv = {r["customer"]: r["totalOwed"] for r in (json.loads(os.environ['RECV']).get("data") or [])}
+bad = 0
+def check(name, ok, detail=""):
+    global bad
+    print(("  ok   " if ok else "  FAIL ") + name + (f" ({detail})" if detail and not ok else ""))
+    if not ok: bad += 1
+check("view invocation succeeded", d.get("status") == "SUCCEEDED", str(d)[:150])
+rows = d.get("data") or []
+by = {r.get("meeting"): r for r in rows}
+for meeting, customer in [("Qantas quarterly review", "Qantas"), ("Atlassian rollout check-in", "Atlassian")]:
+    r = by.get(meeting) or {}
+    check(f"'{meeting}' is prepared", bool(r))
+    if not r: continue
+    check(f"  {customer} owed figure matches the receivables view",
+          r.get("owed") == recv.get(customer), f"{r.get('owed')} vs {recv.get(customer)}")
+    check(f"  {customer} briefing is substantive prose", len(str(r.get("briefing") or "")) > 200)
+sys.exit(1 if bad else 0)
+PYEOF
+
 [ "$fail" = 0 ] && echo "ALL CHECKS PASS" || { echo "DRIFT DETECTED"; exit 1; }

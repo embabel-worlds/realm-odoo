@@ -42,3 +42,14 @@ customers:
     website: https://www.bunnings.com.au
     invoices:
       - { ref: SEED-BUN-1, amount: 22000, description: "Store network pilot" }
+
+# Meetings, so preparation has something to prepare for. Times are seeded relative to the
+# day the seed runs (start_in_days at 10:00 UTC, one hour long) — a demo seeded once and
+# opened a month later would otherwise be preparing for the past.
+meetings:
+  - name: "Qantas quarterly review"
+    customer: Qantas
+    start_in_days: 1
+  - name: "Atlassian rollout check-in"
+    customer: Atlassian
+    start_in_days: 2

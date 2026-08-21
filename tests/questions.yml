@@ -63,3 +63,7 @@
   expect: { nonEmpty: true }
 - question: "how do our open opportunities feel"
   expect: { nonEmpty: true }
+# Meeting prep is a VIEW (OdooMeetingBriefing) — virtual cypher end to end, synthesize()
+# composing the prose in-query — so the money beside the prose reconciles like any figure.
+- question: "prep me for my meeting with Qantas"
+  expect: { matchesView: { name: OdooMeetingBriefing, column: owed, args: { customer: "Qantas" } } }
