@@ -57,3 +57,9 @@
 # News is volatile by nature — the assertion is attribution and presence, not a figure.
 - question: "what's in the news about the companies that owe us money"
   expect: { nonEmpty: true }
+# Judgment questions route to the deal-triage LENS (model judgment; no single query exists) —
+# the selector must hand them over rather than guessing a numeric proxy for "risk".
+- question: "which of our deals are at risk"
+  expect: { nonEmpty: true }
+- question: "how do our open opportunities feel"
+  expect: { nonEmpty: true }

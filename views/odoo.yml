@@ -39,7 +39,9 @@
   description: >-
     Which customers owe us money, most first: one row per customer with the count of posted
     unpaid invoices and the exact total still owed. THE answer for "who owes us most",
-    "our most valuable customer by outstanding balance", "total receivables per customer".
+    "who still hasn't paid us", "unpaid customers", "our most valuable customer by
+    outstanding balance", "total receivables per customer". The payment-status filter is
+    INSIDE the view (posted invoices, not fully paid) — it needs no parameter to express it.
     Grouping is by customer id, so duplicate names and duplicate invoice names cannot
     inflate or merge anything.
   outputLabel: ReceivablesRow
