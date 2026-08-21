@@ -57,12 +57,17 @@
 # News is volatile by nature — the assertion is attribution and presence, not a figure.
 - question: "what's in the news about the companies that owe us money"
   expect: { nonEmpty: true }
-# Judgment questions route to the deal-triage LENS (model judgment; no single query exists) —
-# the selector must hand them over rather than guessing a numeric proxy for "risk".
+# Judgment questions route to the OdooDealTriage VIEW — classify() carries the judgment
+# in-query now, so the figures beside the labels reconcile like any other view's. Unfiltered
+# questions assert matchesView (the full set's top revenue is label-independent); the at-risk
+# question filters BY a model label, whose membership two runs may judge differently, so it
+# asserts presence — the seed's souring thread exists precisely so this stays honest.
 - question: "which of our deals are at risk"
   expect: { nonEmpty: true }
 - question: "how do our open opportunities feel"
-  expect: { nonEmpty: true }
+  expect: { matchesView: { name: OdooDealTriage, column: revenue } }
+- question: "triage the pipeline"
+  expect: { matchesView: { name: OdooDealTriage, column: revenue } }
 # Meeting prep is a VIEW (OdooMeetingBriefing) — virtual cypher end to end, synthesize()
 # composing the prose in-query — so the money beside the prose reconciles like any figure.
 - question: "prep me for my meeting with Qantas"

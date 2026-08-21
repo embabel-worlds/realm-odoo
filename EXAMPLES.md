@@ -4,7 +4,7 @@ Real questions against the demo book — each with where the answer comes from a
 back, verbatim, from the seeded demo (`seed/`: real companies, fictional debts). Every figure
 here is reconciled against Odoo directly by `tests/verify.sh`; every question lives in
 `tests/questions.yml` as a permanent regression test. Ask these through the chat, the
-`/api/v1/admin/kg/ask` endpoint, or the whole-customer app's Ask box.
+`/api/v1/admin/kg/ask` endpoint, or the Prospect app's Ask box.
 
 ## The book itself
 
@@ -61,14 +61,17 @@ here is reconciled against Odoo directly by `tests/verify.sh`; every question li
 ## Judgment (the AI layer)
 
 > **Which of our deals are at risk?**
-> → lens `deal-triage` (provenance says so: no single query exists) — Atlassian's $120k
-> deal at 65% is **at_risk**: its own chatter thread reads negative (pricing pushback,
-> legal stalled three weeks, champion gone quiet). The judgment outweighs the optimistic
-> probability field — which is the point.
+> → view `OdooDealTriage`, bound as `triage='at_risk'` — Atlassian's $120k deal at 65% is
+> **at_risk**: its own chatter thread reads negative (pricing pushback, legal stalled three
+> weeks, champion gone quiet). The judgment outweighs the optimistic probability field —
+> which is the point. The classification is `classify()` inside the query, its rubric the
+> function's third argument, so the revenue figures beside the verdicts reconcile like any
+> other view's.
 
 > **How do our open opportunities feel?**
-> → the same lens — sentiment per deal read from what participants actually wrote,
-> including a French email thread correctly read as positive.
+> → the same view — sentiment per deal read from what participants actually wrote,
+> including a French email thread correctly read as positive. A deal nobody has written on
+> gets a null sentiment, not a neutral one: silence is unknown.
 
 ## Meeting preparation
 

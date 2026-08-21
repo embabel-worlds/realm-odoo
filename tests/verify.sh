@@ -69,7 +69,7 @@ print(f'{max(nums):.2f}' if nums else 'NO-NUMBER')")
 done
 
 echo "== L5: the app's own calls =="
-for a in whole-customer whole-customer.css whole-customer.js; do
+for a in prospect prospect.css prospect.js; do
   code=$(curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" "$APPLIANCE/api/v1/apps/$a")
   check "app asset $a" "200" "$code"
 done
@@ -160,35 +160,47 @@ PYEOF
 fi
 
 echo "== L7: the AI layer judges what the seed planted =="
-# A model's opinion has no cents, so this leg does not reconcile figures — it asserts the
-# envelope, the label vocabulary, and the two seeded chatter arcs, which were WRITTEN to be
-# unambiguous: a judge that cannot read "budget approved" as positive is broken, not subtle.
-LENS=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/lenses/deal-triage/invoke" \
+# The judgments live in the OdooDealTriage VIEW now (classify() in-query; the lens is gone).
+# A model's opinion still has no cents — labels are asserted for vocabulary and the two
+# seeded chatter arcs, which were WRITTEN to be unambiguous: a judge that cannot read
+# "budget approved" as positive is broken, not subtle. But the FIGURES beside the labels are
+# the query's, so they now reconcile like any view's: top revenue must equal the pipeline
+# view's, and a null sentiment (a deal nobody wrote on) must arrive as null, never a
+# sentinel sentence in a label column.
+TRIAGE=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooDealTriage/invoke" \
+  -H 'Content-Type: application/json' -d '{"args":{"triage":""}}')
+ATRISK=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooDealTriage/invoke" \
+  -H 'Content-Type: application/json' -d '{"args":{"triage":"at_risk"}}')
+PIPE=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooOpenPipeline/invoke" \
   -H 'Content-Type: application/json' -d '{"args":{}}')
-LENS="$LENS" python3 - <<'PYEOF' || fail=1
+TRIAGE="$TRIAGE" ATRISK="$ATRISK" PIPE="$PIPE" python3 - <<'PYEOF' || fail=1
 import json, os, sys
-d = json.loads(os.environ['LENS'])
+d = json.loads(os.environ['TRIAGE'])
 bad = 0
 def check(name, ok, detail=""):
     global bad
     print(("  ok   " if ok else "  FAIL ") + name + (f" ({detail})" if detail and not ok else ""))
     if not ok: bad += 1
-check("lens invocation succeeded", d.get("status") == "SUCCEEDED", str(d)[:150])
-data = d.get("data")
-if isinstance(data, str):
-    try: data = json.loads(data)
-    except Exception: data = {}
-rows = (data or {}).get("rows") or []
+check("view invocation succeeded", d.get("status") == "SUCCEEDED", str(d)[:150])
+rows = d.get("data") or []
 check("triage rows returned", len(rows) > 0)
 check("triage labels stay in vocabulary",
       all(r.get("triage") in ("strategic", "standard", "at_risk") for r in rows))
-check("sentiment labels stay in vocabulary",
+check("sentiment labels stay in vocabulary (null = nobody wrote; never a sentence)",
       all(r.get("sentiment") in ("positive", "neutral", "negative", None) for r in rows))
+pipe = json.loads(os.environ['PIPE']).get("data") or []
+top = lambda rs, k: max((r.get(k) for r in rs if isinstance(r.get(k), (int, float))), default=None)
+check("top revenue reconciles against the pipeline view",
+      top(rows, "revenue") == top(pipe, "expectedRevenue"),
+      f"{top(rows, 'revenue')} vs {top(pipe, 'expectedRevenue')}")
 by = {r.get("deal"): r for r in rows}
 atl, qf = by.get("SEED Team workflow rollout") or {}, by.get("SEED Fleet data platform") or {}
 check("seeded negative arc reads negative (Atlassian)", atl.get("sentiment") == "negative", str(atl))
 check("seeded positive arc reads positive (Qantas)", qf.get("sentiment") == "positive", str(qf))
 check("negative thread outweighs a 65% probability (at_risk)", atl.get("triage") == "at_risk", str(atl))
+ar = json.loads(os.environ['ATRISK']).get("data") or []
+check("the triage parameter filters (every returned row is at_risk)",
+      all(r.get("triage") == "at_risk" for r in ar), str([r.get("triage") for r in ar]))
 sys.exit(1 if bad else 0)
 PYEOF
 

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prospect — the view over the business</title>
+  <script type="application/embabel-app+json">
+  {
+    "version": 1,
+    "description": "Pipeline and receivables per customer, over live Odoo through realm-odoo — with meeting briefings, deal triage and an AI read grounded on the rows shown.",
+    "dependsOn": {
+      "views": ["OdooPipelineReceivables", "OdooDealTriage", "OdooMeetingBriefing"],
+      "realms": ["odoo"],
+      "gateway": ["ai", "kg"]
+    }
+  }
+  </script>
+  <link rel="stylesheet" href="prospect.css">
+  <script src="/api/v1/apps-runtime/v1/embabel.js"></script>
+  <script src="/api/v1/apps-runtime/gateway.js"></script>
+</head>
+<body>
+  <header class="o_nav">
+    <span class="o_brand">Prospect</span>
+    <span class="o_crumb">What's in play, what's owed, and how it feels</span>
+    <label class="o_stage">Stage
+      <select id="stage">
+        <option>New</option><option>Qualified</option>
+        <option selected>Proposition</option><option>Won</option>
+      </select>
+    </label>
+  </header>
+
+  <section class="o_ask">
+    <input id="ask" placeholder="Ask across modules — e.g. which customers owe us the most while we chase new deals?">
+    <button id="askBtn" class="o_btn o_btn_primary">Ask</button>
+    <!-- The kind of thing you can ask — one chip per layer of the answer surface (figures,
+         cross-system, judgment, news, briefing), lifted from tests/questions.yml so every
+         suggestion is one the battery proves. Click to populate, not to fire: the question
+         stays editable, which is the invitation. -->
+    <div class="o_chips" aria-label="Example questions">
+      <button class="o_chip" type="button">Which customers owe us most money?</button>
+      <button class="o_chip" type="button">Which of our deals are at risk?</button>
+      <button class="o_chip" type="button">Who ultimately owns the companies that owe us money?</button>
+      <button class="o_chip" type="button">What's in the news about our debtors?</button>
+      <button class="o_chip" type="button">Brief me on my upcoming meetings</button>
+    </div>
+    <div id="askOut" class="o_askout" hidden></div>
+  </section>
+
+  <section id="briefings" class="o_briefings" hidden aria-live="polite"></section>
+
+  <main id="cards" class="o_kanban" aria-live="polite">
+    <div class="o_empty">Loading live Odoo data…</div>
+  </main>
+
+  <footer class="o_foot">
+    Every figure fetched at load through realm-odoo's producers — Odoo's own API, its record
+    rules intact. Nothing mirrored, nothing invented; AI reads are labelled and grounded on the
+    rows above them. Triage and sentiment are model-made labels from each deal's own chatter,
+    shown beside exact figures, never instead of them.
+  </footer>
+  <script src="prospect.js"></script>
+</body>
+</html>

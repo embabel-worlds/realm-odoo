@@ -158,12 +158,16 @@ The figures (`owed`, `unpaidInvoices`) are computed by the query and travel besi
 prose; the harness reconciles them against the receivables view exactly. The model narrates
 only the facts the query handed it, and is instructed to state absences rather than invent.
 
-**Lens AI** — `lenses/deal-triage.yml` classifies every open opportunity (strategic /
-standard / at_risk) and reads sentiment from each deal's chatter thread via
-`gateway.ai.classify`. It is a lens rather than a view because its judgments span several
-independent queries composed in code. Lenses join the same selection catalog as views
-(`lens:<id>`), so "which deals are at risk" routes there — the answer's provenance says
-`answered by lens 'deal-triage'`, because no single query exists.
+**Classification in-query** — `OdooDealTriage` classifies every open opportunity
+(strategic / standard / at_risk) and reads sentiment from each deal's chatter thread, both
+via the `classify()` aggregation — the label set as its second argument, the rubric defining
+what each label means as its third. It began life as a lens composing three queries in
+script; the engine's classify() made the composition one query, so the judgments moved into
+a view and its figures joined the reconciled surface. Triage is judged in a `WITH` so the
+query can filter on it — the filterable-aggregation lane stamps the label before the query
+runs — which is what lets the selector bind "which deals are at risk" as `triage='at_risk'`
+instead of declining for an inexpressible constraint. Sentiment stays null for a deal
+nobody has written on: silence is not neutral, it is unknown.
 
 ## Layer 7 — how a question becomes an answer
 

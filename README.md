@@ -33,17 +33,20 @@ its Odoo record, and ships the tests that prove the numbers.
   identity-keyed dedupe live HERE, tested once. Every entity column travels with its id.
   Cross-realm views join the book to Diffbot firmographics (debtor ownership — "who
   ultimately owns the companies that owe us money") and to live news, gated through the
-  Diffbot hop so a fictional customer never attracts a real company's headlines. And
-  `OdooMeetingBriefing` is the AI layer in-query: one Virtual Cypher statement walks meeting
-  → attendees → debt → deals → chatter → firmographics → news and `synthesize()`s a briefing
-  per meeting, exact figures beside the prose.
-- `lenses/deal-triage.yml` — classification where one query can't judge: every open deal
-  triaged strategic/standard/at_risk, sentiment read from its own chatter thread.
+  Diffbot hop so a fictional customer never attracts a real company's headlines. And two
+  views carry the AI layer in-query: `OdooMeetingBriefing` walks meeting → attendees → debt
+  → deals → chatter → firmographics → news in one Virtual Cypher statement and
+  `synthesize()`s a briefing per meeting; `OdooDealTriage` `classify()`s every open deal
+  strategic/standard/at_risk (filterable, so "which deals are at risk" binds it) and reads
+  sentiment from each deal's own chatter thread. Exact figures travel beside the labels and
+  prose in both.
 - `seed/` — a demo book of REAL companies with fictional debts, deals, chatter arcs and
   meetings, created through Odoo's own API; gated, idempotent, removable.
-- `apps/whole-customer.*` — pipeline × receivables per customer in Odoo's visual idiom, with
+- `apps/prospect.*` — pipeline × receivables per customer in Odoo's visual idiom, with
   an AI read grounded on each card's rows, an Ask box showing the generated Virtual Cypher,
-  and the `<x>Id` linking convention: names jump to cards or open the record in Odoo.
+  and the `<x>Id` linking convention: names jump to cards or open the record in Odoo. The
+  intelligence views land here too: meeting briefings above the cards, triage and sentiment
+  pills on each open deal — arriving after the figures, never delaying them.
 - `skills/odoo-extension/` — teaches a coding agent to extend this realm for a customer's
   custom modules by reading `fields_get` through the realm's own API.
 - `tests/` — `questions.yml` (the natural-language battery; money and counts assert
@@ -61,7 +64,7 @@ its Odoo record, and ships the tests that prove the numbers.
    passes that whole file into the container, so no compose edit is needed.
 4. The server URL in `apis/odoo-json2.json` (`servers[0].url`) is the one install-specific
    fact here — point it at your Odoo as the APPLIANCE reaches it
-   (`host.docker.internal:8069` for a host-local demo). `apps/whole-customer.js` carries the
+   (`host.docker.internal:8069` for a host-local demo). `apps/prospect.js` carries the
    browser-reachable twin (`ODOO_BASE`) for record deep links.
 5. Install by reference from the appliance's realms mount (`install_realm_from_path`), then
    `realm_refresh` after edits.

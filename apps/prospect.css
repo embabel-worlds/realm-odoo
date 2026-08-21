@@ -21,6 +21,10 @@ body { margin: 0; background: var(--o-bg); color: var(--o-text);
 .o_btn_primary { background: var(--o-plum); color: #fff; }
 .o_btn_primary:hover { background: var(--o-plum-dark); }
 .o_btn_ghost { background: transparent; color: var(--o-plum); border: 1px solid var(--o-plum); }
+.o_chips { width: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
+.o_chip { border: 1px solid var(--o-border); background: #fff; color: var(--o-plum);
+  border-radius: 999px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
+.o_chip:hover { border-color: var(--o-plum); background: #faf7f9; }
 .o_askout { width: 100%; background: #fff; border: 1px solid var(--o-border); border-radius: 8px;
   padding: 12px 14px; margin-top: 4px; white-space: pre-wrap; }
 .o_kanban { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
@@ -36,6 +40,14 @@ body { margin: 0; background: var(--o-bg); color: var(--o-text);
   font-weight: 600; }
 .o_pill_owe { background: #fbe5e7; color: var(--o-danger); }
 .o_pill_clear { background: #e6f4ea; color: var(--o-ok); }
+/* The judgment pills — model-made labels, so they whisper rather than shout. */
+.o_pill_risk { background: #fbe5e7; color: var(--o-danger); }
+.o_pill_strat { background: #f1e9ef; color: var(--o-plum); }
+.o_pill_std { background: #eeeeee; color: var(--o-muted); }
+.o_sent { font-size: 11px; font-weight: 600; }
+.o_sent_positive { color: var(--o-ok); }
+.o_sent_neutral { color: var(--o-muted); }
+.o_sent_negative { color: var(--o-danger); }
 .o_money { font-variant-numeric: tabular-nums; font-weight: 600; }
 .o_owed { color: var(--o-danger); }
 .o_read { margin-top: 12px; }
@@ -43,6 +55,12 @@ body { margin: 0; background: var(--o-bg); color: var(--o-text);
   padding: 9px 12px; font-size: 13px; white-space: pre-wrap; }
 .o_read_tag { display: block; margin-top: 6px; color: var(--o-muted); font-size: 11px; }
 .o_empty { color: var(--o-muted); padding: 30px; grid-column: 1/-1; text-align: center; }
+.o_briefings { padding: 12px 18px 0; }
+.o_briefhead { margin: 0 0 6px; }
+.o_brief { background: var(--o-card); border: 1px solid var(--o-border); border-radius: 8px;
+  padding: 10px 14px; margin-bottom: 8px; }
+.o_brief_top { font-size: 13px; }
+.o_brief_text { margin-top: 6px; font-size: 13px; color: var(--o-text); white-space: pre-wrap; }
 .o_foot { color: var(--o-muted); font-size: 12px; padding: 6px 18px 60px; }
 
 .o_table { border-collapse: collapse; width: 100%; font-size: 13px; }

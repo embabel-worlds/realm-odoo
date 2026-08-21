@@ -1,7 +1,8 @@
 # Views over the Diffbot bridge (types/diffbot.yml) — the customer book joined to the real
-# companies behind its domains. Everything here needs realm-diffbot installed and a
-# DIFFBOT_TOKEN; without them these views load but return nothing, and the Odoo-only views
-# are untouched.
+# companies behind its domains. The pure joins here need realm-diffbot installed and a
+# DIFFBOT_TOKEN; without them they load but return nothing, and the Odoo-only views are
+# untouched. The two AI views (OdooMeetingBriefing, OdooDealTriage) reach Diffbot through
+# OPTIONAL hops: they still answer without it, and say what they could not resolve.
 #
 # nbEmployees materializes as a STRING on the virtual node, so anything numeric about it
 # goes through toInteger() — sorting the raw property would be lexical and wrong.
@@ -109,3 +110,54 @@
            c.id AS customerId, c.name AS customer, owed, unpaid AS unpaidInvoices,
            synthesize(factText, 'a meeting briefing for the salesperson attending: 4-6 sentences of plain prose, using ONLY these facts, never inventing or softening; if news is present mention the most relevant item; end with the one thing to raise') AS briefing
     ORDER BY starts
+
+- name: OdooDealTriage
+  description: |
+    Classify every open opportunity — strategic / standard / at_risk — and read the sentiment
+    of its recent interactions from the chatter thread. Answers "which deals are in trouble",
+    "which deals are at risk", "how do our opportunities feel", "triage the pipeline",
+    "understand our recent interactions", "which opportunities need attention". Sentiment is
+    null for a deal nobody has written on: silence is not neutral, it is unknown.
+  outputLabel: Deal triage
+  params:
+    triage:
+      type: string
+      default: ""
+      description: "Only deals judged this way: strategic, standard or at_risk. Empty = every open deal."
+  # The lens this replaces (lenses/deal-triage.yml) composed three queries and two
+  # gateway.ai.classify calls in script; the engine's classify() aggregation now carries the
+  # same judgments in-query, the rubric travelling as its third argument. The figures
+  # (revenue, probability, headcount) are computed by the query and travel BESIDE the labels;
+  # the labels are the only model-made cells. Triage is judged in a WITH so the query can
+  # FILTER on it (the filterable-aggregation lane stamps it before the query runs) — that is
+  # what lets the selector bind "which deals are at risk" as triage='at_risk'. It judges a
+  # per-deal digest that includes the thread itself, so the judge reads the interactions
+  # directly rather than a precomputed mood; sentiment reduces the same thread in RETURN.
+  # Chatter arrives as Odoo's HTML — the judge is instructed to read meaning, and tags are
+  # noise it tolerates (same stance as the briefing).
+  cypher: |
+    MATCH (b:OdooBook)-[:HAS_OPEN_LEAD]->(l:OdooLead)-[:LEAD_OF]->(c:OdooCustomer)
+    OPTIONAL MATCH (l)-[:HAS_MESSAGE]->(msg:OdooMessage)
+    WITH l, c, collect(DISTINCT msg.body) AS bodies
+    OPTIONAL MATCH (c)-[:HAS_DIFFBOT_ORG]->(d:DiffbotOrganization)
+    WITH l, c, bodies, d,
+         CASE WHEN size(bodies) = 0 THEN ''
+              ELSE reduce(s = '', x IN bodies[0..6] | s + ' | ' + coalesce(x,'')) END AS thread
+    WITH l, c, d, thread,
+         classify(l.name + ' — ' + c.name +
+           CASE WHEN d IS NULL THEN ''
+                ELSE ' (' + coalesce(toString(d.nbEmployees),'?') + ' employees)' END +
+           ', $' + coalesce(toString(l.expected_revenue),'?') +
+           ' at ' + coalesce(toString(l.probability),'?') + '% win probability' +
+           CASE WHEN thread = '' THEN ' | no recent interactions'
+                ELSE ' | thread: ' + thread END,
+           'strategic,standard,at_risk',
+           'One open sales opportunity. strategic: large value or a major company, worth leadership attention. at_risk: the interactions or odds say it is stalling or souring, whatever its size. standard: everything else.') AS triage
+    WHERE $triage = '' OR triage = $triage
+    RETURN l.id AS leadId, l.name AS deal, c.id AS customerId, c.name AS customer,
+           l.expected_revenue AS revenue, l.probability AS probability,
+           toInteger(d.nbEmployees) AS headcount,
+           classify(thread, 'positive,neutral,negative',
+             'Each item is the recent chatter on one sales opportunity. Judge the current disposition of the customer toward the deal from what was actually written.') AS sentiment,
+           triage
+    ORDER BY revenue DESC

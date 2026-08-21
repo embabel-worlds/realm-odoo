@@ -1,7 +1,7 @@
 /*
- * The Whole Customer — live data at load, per the app contract: the view fetches through
- * realm-odoo's producers each time; nothing is baked in. The AI read is generated on demand,
- * grounded ONLY on the rows the card shows, and labelled as such.
+ * Prospect — the view over the business. Live data at load, per the app contract: the view
+ * fetches through realm-odoo's producers each time; nothing is baked in. The AI read is
+ * generated on demand, grounded ONLY on the rows the card shows, and labelled as such.
  */
 (function () {
   /* The source system's browser-reachable base, for record deep links (demo constant —
@@ -11,8 +11,10 @@
   const odooUrl = (model, id) => ODOO_BASE + '/odoo/' + model + '/' + id;
   /* The <x>Id linking convention: id columns are not displayed — they turn their display
      column into links. Identity travels; names become doors. */
-  const ID_MODELS = { customerId: 'res.partner', leadId: 'crm.lead', invoiceId: 'account.move' };
-  const ID_LABELS = { customerId: 'customer', leadId: 'opportunity', invoiceId: 'invoice' };
+  const ID_MODELS = { customerId: 'res.partner', leadId: 'crm.lead', invoiceId: 'account.move',
+    meetingId: 'calendar.event' };
+  const ID_LABELS = { customerId: 'customer', leadId: 'opportunity', invoiceId: 'invoice',
+    meetingId: 'meeting' };
 
   const cards = document.getElementById('cards');
   const stageSel = document.getElementById('stage');
@@ -65,8 +67,9 @@
           : '<span class="o_pill o_pill_clear">nothing owed</span>') + '</h2>' +
         '<div class="o_mail">' + (c.email || '') + '</div>' +
         '<div class="o_sec">Open opportunities · ' + money(pipeline) + ' pipeline</div>' +
-        [...c.opps.values()].map(o =>
-          '<div class="o_row"><span>' + o.name + '</span><span class="o_money">' + money(o.pipeline) + '</span></div>').join('') +
+        [...c.opps].map(([leadId, o]) =>
+          '<div class="o_row" data-lead="' + leadId + '"><span>' + o.name +
+          ' <span class="o_judged"></span></span><span class="o_money">' + money(o.pipeline) + '</span></div>').join('') +
         (c.invoices.size
           ? '<div class="o_sec">Unpaid invoices</div>' +
             [...c.invoices.values()].map(i =>
@@ -77,6 +80,53 @@
       card.querySelector('.o_read button').addEventListener('click', () => aiRead(card, name, c, pipeline, owed));
       cards.appendChild(card);
     }
+    loadTriage();
+  }
+
+  /* The intelligence layer arrives AFTER the cards: OdooDealTriage judges every open deal
+     (one classify() per deal, in-query), so it is seconds behind the figures — the cards
+     never wait on a model. Labels land as pills on the rows they judge; a deal the view
+     does not cover (other stages) simply stays unlabelled. */
+  const TRIAGE_CLASS = { at_risk: 'o_pill_risk', strategic: 'o_pill_strat', standard: 'o_pill_std' };
+  async function loadTriage() {
+    let rows;
+    try {
+      rows = rowsOf(await embabel.views.invoke('OdooDealTriage', { triage: '' }));
+    } catch (e) { return; /* judgment is an extra; its absence must not mark the figures */ }
+    for (const r of rows) {
+      const slot = cards.querySelector('.o_row[data-lead="' + r.leadId + '"] .o_judged');
+      if (!slot) continue;
+      slot.innerHTML =
+        (r.triage ? '<span class="o_pill ' + (TRIAGE_CLASS[r.triage] || 'o_pill_std') + '">' +
+          r.triage.replace('_', ' ') + '</span>' : '') +
+        /* Null sentiment is a deal nobody has written on — silence is unknown, so no pill. */
+        (r.sentiment ? ' <span class="o_sent o_sent_' + r.sentiment + '" title="Sentiment of the chatter thread">' +
+          r.sentiment + '</span>' : '');
+    }
+  }
+
+  /* Upcoming meetings, briefed by OdooMeetingBriefing — the walk and the synthesize() both
+     happen in the query; the app renders what came back: exact owed figure beside the prose. */
+  async function loadBriefings() {
+    const sec = document.getElementById('briefings');
+    let rows;
+    try {
+      rows = rowsOf(await embabel.views.invoke('OdooMeetingBriefing', { customer: '' }));
+    } catch (e) { return; /* no meetings surface without the view; the cards stand alone */ }
+    if (!rows.length) return;
+    sec.hidden = false;
+    sec.innerHTML = '<div class="o_sec o_briefhead">Upcoming meetings · briefed from debt, deals, chatter and news</div>' +
+      rows.map(r =>
+        '<div class="o_brief">' +
+        '<div class="o_brief_top"><strong>' + r.meeting + '</strong> · ' + r.starts +
+        ' · <a class="o_link" href="#customer-' + r.customerId + '">' + r.customer + '</a> ' +
+        '<a class="o_ext" target="_blank" rel="noopener" title="Open in Odoo" href="' +
+        odooUrl('calendar.event', r.meetingId) + '">↗</a>' +
+        (r.owed > 0 ? ' <span class="o_pill o_pill_owe">owes ' + money(r.owed) + '</span>' : '') +
+        '</div>' +
+        '<div class="o_brief_text"></div></div>').join('');
+    /* The briefing is model prose — painted as text, never parsed. */
+    sec.querySelectorAll('.o_brief_text').forEach((el, i) => { el.textContent = rows[i].briefing || ''; });
   }
 
   async function aiRead(card, name, c, pipeline, owed) {
@@ -200,6 +250,15 @@
     } catch (e) { out.textContent = 'Ask failed: ' + e.message; }
   });
 
+  /* Example-question chips populate the box and hand focus back — never auto-fire, so the
+     question stays the user's to edit before it costs a model call. */
+  document.querySelectorAll('.o_chip').forEach(chip => chip.addEventListener('click', () => {
+    const box = document.getElementById('ask');
+    box.value = chip.textContent;
+    box.focus();
+  }));
+
   stageSel.addEventListener('change', load);
   load();
+  loadBriefings();
 })();
