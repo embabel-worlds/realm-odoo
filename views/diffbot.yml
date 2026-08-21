@@ -1,0 +1,39 @@
+# Views over the Diffbot bridge (types/diffbot.yml) — the customer book joined to the real
+# companies behind its domains. Everything here needs realm-diffbot installed and a
+# DIFFBOT_TOKEN; without them these views load but return nothing, and the Odoo-only views
+# are untouched.
+#
+# nbEmployees materializes as a STRING on the virtual node, so anything numeric about it
+# goes through toInteger() — sorting the raw property would be lexical and wrong.
+
+- name: OdooCustomerFirmographics
+  description: |
+    Who our customers really are: every customer whose website resolves in the Diffbot
+    Knowledge Graph, with headcount, industries and ultimate owner. Answers "how big are
+    our customers", "which of our customers is the biggest company", "what industries do we
+    sell into", "enrich our customer book". A customer missing here has an unresolvable (or
+    unset) website — absence is the honest answer, not a failure.
+  outputLabel: Customer firmographics
+  cypher: |
+    MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer)-[:HAS_DIFFBOT_ORG]->(d:DiffbotOrganization)
+    RETURN c.id AS customerId, c.name AS customer, c.website AS website,
+           toInteger(d.nbEmployees) AS headcount, d.industries AS industries,
+           d.ultimateParentName AS ultimateOwner, d.diffbotUri AS diffbotUri
+    ORDER BY headcount DESC
+
+- name: OdooDebtorOwnership
+  description: |
+    Which of our debtors belong to a larger corporate group, and who ultimately owns them —
+    debtors whose Diffbot record names an ultimate parent OTHER than themselves, with what
+    they owe. Answers "who ultimately owns our debtors", "which customers are subsidiaries",
+    "what corporate groups are we exposed to". The exposure question: an invoice to a
+    subsidiary is exposure to the parent.
+  outputLabel: Debtor ownership
+  cypher: |
+    MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
+    WITH c, sum(i.amount_residual) AS totalOwed
+    MATCH (c)-[:HAS_DIFFBOT_ORG]->(d:DiffbotOrganization)
+    WHERE d.ultimateParentName IS NOT NULL AND d.ultimateParentName <> d.name
+    RETURN c.id AS customerId, c.name AS debtor, totalOwed,
+           d.ultimateParentName AS ultimateOwner, toInteger(d.nbEmployees) AS employees
+    ORDER BY totalOwed DESC

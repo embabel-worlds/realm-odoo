@@ -1,0 +1,41 @@
+# The Diffbot bridge — realm-odoo's stage-two move: joining the vendor's own records to what
+# the vendor can never hold. This file contributes edges INTO DiffbotOrganization, a type
+# realm-diffbot owns; joins ACCUMULATE across every declaration of a type name (the engine
+# merges them, deliberately — a domain realm routinely contributes the edge from its own
+# anchor into a type another realm owns), so this entry declares NO properties and NO
+# description: realm-diffbot's full declaration is the type, this one only adds the doors.
+#
+# When realm-diffbot is NOT installed, the two producers named here don't exist and the world
+# records a loading problem against this file, but realm-odoo still loads and every Odoo view
+# still answers. Install realm-diffbot and refresh, and these edges light up.
+
+- name: DiffbotOrganization
+  userAnchor: false
+  virtualJoins:
+    # Domain first, because a domain identifies a company and a name does not. The key is
+    # Odoo's own `website` field, passed straight to Diffbot Enhance as its `url` parameter,
+    # which accepts a full URL. A partner without a website carries FALSE (Odoo's spelling of
+    # unset); that key fetches nothing at Enhance's 0.7 threshold and the customer simply has
+    # no firmographics — graceful, but each such key still costs an Enhance call, so keep
+    # maxAnchors modest: an Odoo book is small and Diffbot credits are metered.
+    - anchorLabel: OdooCustomer
+      relationship: HAS_DIFFBOT_ORG
+      keyField: website
+      recordKeyField: matchedFor
+      producer: orgEnhanceByDomain
+      maxAnchors: 25
+      description: "Firmographics for this customer, matched by its website domain — the strong key."
+
+    # Name fallback, selected explicitly with `[:HAS_DIFFBOT_ORG {via:'name'}]` — never the
+    # default, because names are weak evidence: Enhance's scored match at 0.7 yields nothing
+    # rather than a guess for an ambiguous name, but a confident wrong match on a generic
+    # name ("Acme Corporation") attributes another company's headcount and owner to this one.
+    # Reach for it when a customer's website is unset and the name is distinctive.
+    - anchorLabel: OdooCustomer
+      relationship: HAS_DIFFBOT_ORG
+      via: name
+      keyField: name
+      recordKeyField: matchedFor
+      producer: orgEnhanceByName
+      maxAnchors: 25
+      description: "Firmographics matched by company NAME — weaker evidence; pin with {via:'name'} only when the website is unset."

@@ -38,7 +38,9 @@
   args:
     domain:
       - ["id", "in", []]
-    fields: [name, email, phone, city, country_id, is_company]
+    # website rides along for the Diffbot bridge (types/diffbot.yml): a domain
+    # identifies a company and a name does not, and website is Odoo's own field.
+    fields: [name, email, phone, city, country_id, is_company, website]
     load: ""
     limit: 200
   cache: { kind: ttl, seconds: 300 }
@@ -98,7 +100,8 @@
   args:
     domain:
       - ["customer_rank", ">", 0]
-    fields: [name, email, phone, city, is_company]
+    # website rides along for the Diffbot bridge — see customersById.
+    fields: [name, email, phone, city, is_company, website]
     load: ""
     limit: 500
   cache: { kind: ttl, seconds: 300 }

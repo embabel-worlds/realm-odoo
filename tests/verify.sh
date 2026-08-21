@@ -105,7 +105,10 @@ for case in battery:
         mv = exp["matchesView"]
         v = curl("/api/v1/views/%s/invoke" % mv["name"], {"args": mv.get("args", {})})
         vrows = v.get("data") or []
-        want, got = top_figure(vrows, mv.get("column")), top_figure(rows)
+        # Same column on BOTH sides when the answer carries it (it does whenever the ask
+        # routed through the view) — comparing the view's totalOwed against the answer's
+        # biggest number once failed a correct answer for leading with a headcount.
+        want, got = top_figure(vrows, mv.get("column")), top_figure(rows, mv.get("column"))
         ok = want is not None and got == want
         print(("  ok   " if ok else "  FAIL ") + q + " -> " + str(got) + (" (view: %s)" % want))
         if not ok: bad += 1
@@ -118,5 +121,42 @@ for case in battery:
             print("       cypher: " + " ".join((a.get("cypher") or "").split())[:180])
 sys.exit(1 if bad else 0)
 PYEOF
+
+echo "== L6: Diffbot firmographics reconcile against Diffbot itself =="
+# Ground truth for the enrichment layer is the enrichment SOURCE: every customer the view
+# says it matched is re-asked of Diffbot Enhance directly, same key, and the headcount must
+# agree exactly. Needs the deployment's DIFFBOT_TOKEN; without it this leg SKIPs loudly
+# rather than passing silently — an unexercised reconciliation is not a green one.
+if [ -z "$DIFFBOT_TOKEN" ]; then
+  echo "  SKIP: set DIFFBOT_TOKEN to reconcile firmographics against the source"
+else
+  # The payload travels by ENVIRONMENT, not by pipe: `echo | python3 - <<EOF` hands the
+  # heredoc to stdin as the program, so the piped JSON silently never arrives — this leg's
+  # first real run (the token gates it) found it reading EOF.
+  FVIEW=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooCustomerFirmographics/invoke" \
+    -H 'Content-Type: application/json' -d '{"args":{}}')
+  FVIEW="$FVIEW" DIFFBOT_TOKEN="$DIFFBOT_TOKEN" python3 - <<'PYEOF' || fail=1
+import json, os, sys, urllib.request, urllib.parse
+token = os.environ['DIFFBOT_TOKEN']
+rows = json.loads(os.environ['FVIEW']).get('data') or []
+# Every row is enriched by construction — the view's MATCH requires the Diffbot hop —
+# so the reconciliation set is the rows that carry the join key to re-ask with.
+matched = [r for r in rows if r.get('website')]
+print(f"  {len(rows)} customers enriched, {len(matched)} carry the join key")
+bad = 0
+for r in matched:
+    q = urllib.parse.urlencode({'type': 'Organization', 'url': r['website'],
+                                'threshold': '0.7', 'token': token})
+    with urllib.request.urlopen('https://kg.diffbot.com/kg/v3/enhance?' + q) as resp:
+        data = json.load(resp)
+    ents = data.get('data') or []
+    truth = (ents[0].get('entity') or {}).get('nbEmployees') if ents else None
+    ok = truth == r.get('headcount')
+    print(("  ok   " if ok else "  FAIL ") +
+          f"{r['customer']}: view headcount {r.get('headcount')} vs Diffbot {truth}")
+    if not ok: bad += 1
+sys.exit(1 if bad else 0)
+PYEOF
+fi
 
 [ "$fail" = 0 ] && echo "ALL CHECKS PASS" || { echo "DRIFT DETECTED"; exit 1; }
