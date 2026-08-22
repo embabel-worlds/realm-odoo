@@ -1,0 +1,36 @@
+# Tips shipped with the realm — content follows capability, so these arrive and leave with
+# realm-odoo. Every question here is one the battery proves (tests/questions.yml); a tip that
+# suggests a question the world cannot answer is a broken promise with a button on it.
+
+- category: hint
+  title: Ask about risk
+  body: "Every open deal is judged from its own chatter — **which deals are at risk** routes to the triage view, exact figures beside the verdicts."
+  action:
+    label: Ask it
+    chatInput: "which deals are at risk"
+
+- category: hint
+  title: Cross-system exposure
+  body: "Odoo knows the debt, Diffbot knows the owner. Ask **who ultimately owns the companies that owe us money** — one query, two systems."
+  action:
+    label: Ask it
+    chatInput: "who ultimately owns the companies that owe us money"
+
+- category: hint
+  title: Briefed before you walk in
+  body: "**Brief me on my upcoming meetings** walks debt, deals, chatter and news per meeting and composes the briefing in-query — the owed figure reconciles to the cent."
+  action:
+    label: Ask it
+    chatInput: "brief me on my upcoming meetings"
+
+- category: did-you-know
+  title: The honest empty
+  body: "Ask **what was our biggest win of last quarter** and you may get no rows — deliberately. An honest empty beats a confident wrong figure, and the battery asserts it stays that way."
+  action:
+    label: Try it
+    chatInput: "what was our biggest win of the last quarter"
+
+- category: hint
+  surface: console
+  title: Prospect, served by this world
+  body: "The Apps tab serves **Prospect** — pipeline × receivables per customer, meeting briefings, triage pills on every deal, and every figure linking back into Odoo."
