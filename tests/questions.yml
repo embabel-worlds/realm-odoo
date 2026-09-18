@@ -40,23 +40,6 @@
   expect: { matchesView: { name: OdooOutstandingInvoices, column: owed } }
 - question: "what are our 10 biggest opportunities over 60%"
   expect: { matchesView: { name: OdooOpenPipeline, column: expectedRevenue, args: { minProbability: 60 } } }
-
-# ── Diffbot enrichment questions — the cross-source layer. These need realm-diffbot and a
-# customer whose website Diffbot recognizes; where enrichment is honestly null the figure
-# questions still reconcile because the view and the ask see the same nulls.
-- question: "how big are our customers"
-  expect: { matchesView: { name: OdooCustomerFirmographics, column: headcount } }
-- question: "which of our customers is the biggest company"
-  expect: { matchesView: { name: OdooCustomerFirmographics, column: headcount } }
-- question: "what industries do we sell into"
-  expect: { nonEmpty: true }
-- question: "which open deals are at the biggest companies"
-  expect: { nonEmpty: true }
-- question: "who ultimately owns the companies that owe us money"
-  expect: { matchesView: { name: OdooDebtorOwnership, column: totalOwed } }
-# News is volatile by nature — the assertion is attribution and presence, not a figure.
-- question: "what's in the news about the companies that owe us money"
-  expect: { nonEmpty: true }
 # Judgment questions route to the OdooDealTriage VIEW — classify() carries the judgment
 # in-query now, so the figures beside the labels reconcile like any other view's. Unfiltered
 # questions assert matchesView (the full set's top revenue is label-independent); the at-risk

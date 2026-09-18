@@ -10,13 +10,6 @@
     chatInput: "which deals are at risk"
 
 - category: hint
-  title: Cross-system exposure
-  body: "Odoo knows the debt, Diffbot knows the owner. Ask **who ultimately owns the companies that owe us money** — one query, two systems."
-  action:
-    label: Ask it
-    chatInput: "who ultimately owns the companies that owe us money"
-
-- category: hint
   title: Briefed before you walk in
   body: "**Brief me on my upcoming meetings** walks debt, deals, chatter and news per meeting and composes the briefing in-query — the owed figure reconciles to the cent."
   action:
