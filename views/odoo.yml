@@ -147,3 +147,15 @@
            i.amount_residual AS owed, i.invoice_date_due AS due, i.payment_state AS status
     ORDER BY owed DESC
     LIMIT $limit
+
+- name: OdooCompanies
+  description: >-
+    Every company the CRM knows — customers and prospects — with its website. THE answer for
+    "which companies are in the CRM". Reading it also keys each of them to the business
+    vocabulary's CustomerAccount, which is how an account-level surface comes to know about a
+    company sales is courting and nobody bills yet.
+  outputLabel: OdooCompanyRow
+  cypher: |
+    MATCH (b:OdooBook)-[:HAS_COMPANY]->(c:OdooCustomer)
+    RETURN c.id AS customerId, c.name AS company, c.website AS website, c.city AS city
+    ORDER BY company

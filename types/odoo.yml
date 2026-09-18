@@ -35,6 +35,10 @@
     stage_id: "Stage id."
     create_date: "When the lead was created."
     date_closed: "When the opportunity was won or lost (set on close)."
+    won_status: "won, lost or pending — Odoo's own words; pending means still open."
+    date_deadline: "Expected closing date."
+    user_id: "The salesperson's user id."
+    active: "False once the opportunity is archived, which is how Odoo marks a LOST deal."
     stageKey: "Echo of the stage name this lead was fetched under."
     scopeKey: "Echo of the book scope this lead was fetched under."
   virtualJoins:
@@ -44,26 +48,46 @@
     - { anchorLabel: OdooStagePipeline, relationship: HAS_LEAD, keyField: stage,
         recordKeyField: stageKey, producer: leadsByStage,
         description: "Every active lead sitting at this pipeline stage." }
+    # EVERY deal with the customer: open, won and lost. The two doors above are the pipeline;
+    # this is the history, and a question about an account needs the history.
+    - { anchorLabel: OdooCustomer, relationship: HAS_OPPORTUNITY, keyField: id,
+        recordKeyField: partner_id, producer: leadsByPartner,
+        description: "Every opportunity with this customer — open, won or lost." }
 
 - name: OdooCustomer
   visibility: internal
+  # The CRM's RECORD of an account, not the account: `parents: [CrmAccount]` says what kind of
+  # record it is, and `hub: CustomerAccount` on `website` (below) says whose. From the account,
+  # TRACKED_AS leads back here, and from here to Odoo's opportunities, contacts and notes.
+  parents: [CrmAccount]
   description: >-
     A partner (res.partner) — a customer, contact or company. email is the bridge field: on a
     Me appliance this is where a Person-spine join would anchor.
   properties:
     id: { metadata: { identity: "true" } }
-    name: "Display name."
+    name: { description: "Display name.", metadata: { canonical: name } }
     email: "Email address."
     phone: "Phone."
     city: "City."
     country_id: "Country id."
     is_company: "True for companies, false for individuals."
-    website: "Company website URL, as Odoo holds it. The key the Diffbot firmographics bridge joins on — a domain identifies a company; a name does not. Odoo spells 'unset' as FALSE, and a false key fetches nothing."
+    # What identifies the COMPANY, as opposed to `id`, which identifies Odoo's record of it and
+    # is what every join in this realm keys on. The spine normalizes; this realm sends the URL
+    # exactly as Odoo holds it.
+    website:
+      hub: CustomerAccount
+      description: "Company website URL, as Odoo holds it. A domain identifies a company; a name does not. Odoo spells 'unset' as FALSE, which keys nothing."
     scopeKey: "Echo of the book scope this customer was fetched under."
   virtualJoins:
     - { anchorLabel: OdooBook, relationship: HAS_CUSTOMER, keyField: scope,
         recordKeyField: scopeKey, producer: customersAll,
         description: "Every customer on the book (customer_rank > 0)." }
+    # Prospects too. HAS_CUSTOMER is who has BOUGHT; an account-level question is as often about
+    # a company sales is still courting, and it has to be an account before anything can be
+    # said about it.
+    - { anchorLabel: OdooBook, relationship: HAS_COMPANY, keyField: scope,
+        recordKeyField: scopeKey, producer: companiesAll,
+        description: "Every company the CRM knows — customers and prospects alike." }
     # Per-element join over the meeting's attendee LIST — one meeting fans out to each
     # attendee partner, so "who am I meeting and what do they owe us" is one traversal.
     - { anchorLabel: OdooMeeting, relationship: MEETING_WITH, keyField: partner_ids,
@@ -71,6 +95,13 @@
         description: "The partners attending this meeting." }
     - { anchorLabel: OdooLead, relationship: LEAD_OF, keyField: partner_id, recordKeyField: id,
         producer: customersById, description: "The customer an opportunity belongs to." }
+    # The vocabulary's own edge, from the vocabulary's own anchor. Odoo is asked for the
+    # account's domain with `website ilike`, a SUBSTRING match, and recordKeyField is `website`
+    # and NOT an echo of the asked key: read through the spine, `https://www.stark.com` is
+    # stark.com and `https://notstark.com` is not, so a stray is left unlinked.
+    - { anchorLabel: CustomerAccount, relationship: TRACKED_AS, keyField: accountKey,
+        recordKeyField: website, producer: customersByWebsite,
+        description: "Odoo's record of a customer account, matched on the company's website." }
 
 - name: OdooInvoice
   visibility: internal
@@ -129,8 +160,31 @@
 
 # A chatter message on an opportunity. Body arrives as HTML, as Odoo stores it — a consumer
 # doing judgment (sentiment, classification) should strip tags first, not ask the model to.
+- name: OdooContact
+  visibility: internal
+  userAnchor: false
+  parents: [AccountContact]
+  description: >-
+    A person at a customer company (a res.partner whose parent is the company), and an
+    AccountContact of the business vocabulary.
+  properties:
+    id: { identity: true, description: "Odoo partner id." }
+    name: "Full name."
+    email: "Email address."
+    function: "Job title."
+    phone: "Phone."
+    parent_id: "The company's partner id."
+  virtualJoins:
+    - { anchorLabel: OdooCustomer, relationship: HAS_ACCOUNT_CONTACT, keyField: id,
+        recordKeyField: parent_id, producer: contactsByCompany,
+        description: "The people Odoo knows at this company." }
+
 - name: OdooMessage
   userAnchor: false
+  # An AccountNote of the business vocabulary: what our own people wrote down, wherever in
+  # Odoo they wrote it — on the company, on a person there, or on a deal. What the CRM
+  # BELIEVES lives in these, which is why "is this problem mentioned anywhere?" reads them.
+  parents: [AccountNote]
   description: |
     An email or comment from an opportunity's chatter thread, newest state of the deal in
     the participants' own words. Tracking entries are excluded at the producer.
@@ -142,10 +196,22 @@
     date: "When it was sent (UTC)."
     subject: "Subject, when the message was an email."
     message_type: "comment (internal note / log) or email."
+    res_id: "The id of the record it was written on."
+    author_id: "The author's partner id."
+    leadKey: "Echo of the lead this message was fetched under."
   virtualJoins:
     - { anchorLabel: OdooLead, relationship: HAS_MESSAGE, keyField: id, recordKeyField: leadKey,
         producer: messagesByLead,
         description: "The opportunity's chatter thread — recent interactions on the deal." }
+    - { anchorLabel: OdooLead, relationship: HAS_NOTE, keyField: id, recordKeyField: leadKey,
+        producer: messagesByLead,
+        description: "What was written on the deal (the same thread, by the vocabulary's name)." }
+    - { anchorLabel: OdooCustomer, relationship: HAS_NOTE, keyField: id, recordKeyField: res_id,
+        producer: messagesByPartner,
+        description: "What was written on the company's own record." }
+    - { anchorLabel: OdooContact, relationship: HAS_NOTE, keyField: id, recordKeyField: res_id,
+        producer: messagesByPartner,
+        description: "What was written on a contact's record." }
 
 # A calendar meeting. The preparation anchor: walk MEETING_WITH to the attendee partners and
 # from them to everything else the book knows — debt, deals, chatter, firmographics, news.
