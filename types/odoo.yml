@@ -18,6 +18,10 @@
 
 - name: OdooLead
   visibility: internal
+  # A child of the business vocabulary's Opportunity (realm-business-vocabulary, which must
+  # be installed first): the node carries :Opportunity as well as :OdooLead, so a question
+  # asked about opportunities is answered here without naming Odoo.
+  parents: [Opportunity]
   description: >-
     A CRM lead/opportunity. expected_revenue and probability are Odoo's own pipeline figures;
     partner_id is the linked customer (bare id) when the lead has been connected to one.
