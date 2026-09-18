@@ -52,13 +52,18 @@
     Me appliance this is where a Person-spine join would anchor.
   properties:
     id: { metadata: { identity: "true" } }
-    name: "Display name."
+    name: { description: "Display name.", metadata: { canonical: name } }
     email: "Email address."
     phone: "Phone."
     city: "City."
     country_id: "Country id."
     is_company: "True for companies, false for individuals."
-    website: "Company website URL, as Odoo holds it. The key the Diffbot firmographics bridge joins on — a domain identifies a company; a name does not. Odoo spells 'unset' as FALSE, and a false key fetches nothing."
+    # What identifies the COMPANY, as opposed to `id`, which identifies Odoo's record of it and
+    # is what every join in this realm keys on. The spine normalizes; this realm sends the URL
+    # exactly as Odoo holds it.
+    website:
+      hub: CustomerAccount
+      description: "Company website URL, as Odoo holds it. A domain identifies a company; a name does not. Odoo spells 'unset' as FALSE, which keys nothing."
     scopeKey: "Echo of the book scope this customer was fetched under."
   virtualJoins:
     - { anchorLabel: OdooBook, relationship: HAS_CUSTOMER, keyField: scope,
