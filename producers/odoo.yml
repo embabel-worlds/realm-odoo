@@ -191,3 +191,95 @@
     load: ""
     limit: 500
   cache: { kind: ttl, seconds: 300 }
+
+# Every company in the CRM, bought or not. The same record shape as customersAll.
+- name: companiesAll
+  kind: api
+  operation: partnersSearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    domain:
+      - ["is_company", "=", true]
+    fields: [name, email, phone, city, is_company, website]
+    load: ""
+    limit: 2000
+  cache: { kind: ttl, seconds: 300 }
+
+# ── Back from the ACCOUNT. The business vocabulary's CustomerAccount is a spine several systems
+# key; these lead from it to what Odoo holds, so a question that starts at an account — asked
+# by a realm that has never heard of Odoo — reaches the deals, the people and the notes.
+
+# Odoo's record of an account, by the company's domain. `ilike` is a SUBSTRING match, so this
+# does not echo the asked key: the join matches each record's own `website` through the spine.
+# One call per account — `ilike` takes no list.
+- name: customersByWebsite
+  kind: api
+  operation: partnersSearchRead
+  records: "$[*]"
+  # String mode: `ilike` wants a string, and list mode would hand it ["stark.com"].
+  keyTemplate: "{key}"
+  batchSafe: false
+  args:
+    domain:
+      - ["website", "ilike", "{keys}"]
+      # Companies only: a contact inherits nothing here, but one may carry the same website.
+      - ["is_company", "=", true]
+    fields: [name, email, phone, city, country_id, is_company, website]
+    load: ""
+    limit: 20
+  # An account billing knows and the CRM does not is asked about on every query otherwise.
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+
+# Every opportunity with a customer. The leading clause is the key; the OR after it asks for
+# archived leads too, because archived is how Odoo marks a LOST deal and search_read hides
+# them by default. Batch IN: one call for a whole traversal.
+- name: leadsByPartner
+  kind: api
+  keyType: int
+  operation: leadsSearchRead
+  records: "$[*]"
+  keyArg: "domain.0.2"
+  args:
+    domain:
+      - ["partner_id", "in", []]
+      - "|"
+      - ["active", "=", true]
+      - ["active", "=", false]
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active]
+    load: ""
+    limit: 500
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+
+- name: contactsByCompany
+  kind: api
+  keyType: int
+  operation: partnersSearchRead
+  records: "$[*]"
+  keyArg: "domain.0.2"
+  args:
+    domain:
+      - ["parent_id", "in", []]
+    fields: [name, email, function, phone, parent_id]
+    load: ""
+    limit: 500
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+
+# What was written on a partner's own record — a company or a person. The record carries
+# `res_id`, the partner it was written on, so no echo is needed and the batch is safe.
+- name: messagesByPartner
+  kind: api
+  keyType: int
+  operation: messagesSearchRead
+  records: "$[*]"
+  keyArg: "domain.1.2"
+  args:
+    domain:
+      - ["model", "=", "res.partner"]
+      - ["res_id", "in", []]
+      - ["message_type", "in", ["comment", "email"]]
+    fields: [res_id, body, date, author_id, subject, message_type]
+    load: ""
+    limit: 500
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
