@@ -38,6 +38,27 @@ as `[id, name]` pairs and every join silently matches nothing.
 New operations (a new model's `search_read`) are added to `apis/odoo-json2.json` as their own
 path — copy an existing one, change the model segment and operationId.
 
+**Declare the filters the domain can express (`pushdown:`).** A domain is a list of triples and no
+text template can build one, so use `argPath` + `clause`. `domain.-` APPENDS, which is what keeps
+an existing `keyArg: "domain.0.2"` pointing at the triple it always did — a domain is an implicit
+conjunction, so nothing links to the clause before it and no `linkPrevious` is needed.
+
+```yaml
+pushdown:
+  - property: state
+    op: IN
+    argPath: domain.-
+    clause: ["state", "in", "{values}"]
+```
+
+This is not a micro-optimisation. Without it a `WHERE` is applied to the graph after every record
+has been fetched, and — because what the source absorbs is what licenses the engine to push a
+`LIMIT` or ask for a `count()` instead of the records — an undeclared filter costs a call per
+anchor, not just a page. A `search_read` that can take the triple should be given it.
+
+Prove it the way you prove everything else here: run the question and look at the call count, not
+at the fact that the rule parsed.
+
 ## 4. Refresh, then prove it with the question
 
 `realm_refresh`, then run the actual question the extension exists to answer, through
