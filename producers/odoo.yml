@@ -42,6 +42,12 @@
     # identifies a company and a name does not, and website is Odoo's own field.
     fields: [name, email, phone, city, country_id, is_company, website]
     load: ""
+    # NO paging, and that is safe HERE for a reason worth writing down: this is a
+    # lookup BY ID, so a chunk of `maxKeysPerCall` (50) keys returns at most 50
+    # records — never near this limit. The sibling by-partner producers batch the
+    # same way but are TO-MANY, where one prolific partner fills the response and
+    # starves the rest of the chunk, so those page. An audit that flags a batched
+    # producer with a flat limit is right to; this is the exception, not an oversight.
     limit: 200
   cache: { kind: ttl, seconds: 300 }
 
@@ -103,7 +109,42 @@
     # website rides along for the Diffbot bridge — see customersById.
     fields: [name, email, phone, city, is_company, website]
     load: ""
-    limit: 500
+    limit: 200
+  # WHAT THE SOURCE ABSORBS DECIDES WHAT THE QUESTION COSTS. An Odoo domain is a list of
+  # triples ANDed together, so `domain.-` appends one conjunct and no `linkPrevious` is needed.
+  #
+  # Declaring these buys two different things, and the second is the one that is easy to miss:
+  #
+  #   1. the source filters, so the walk is over matching rows instead of the whole book;
+  #   2. the engine may ask for a COUNT instead of the records at all. Aggregate pushdown
+  #      refuses on ANY residual predicate — what the source will not apply, the graph must,
+  #      and a number cannot be filtered after the fact. So an undeclared filter does not just
+  #      cost a broader fetch; it makes "how many" unanswerable except by reading every row.
+  #
+  # Every property below is the name the QUERY writes, which here is also Odoo's own field name
+  # because this realm declares no `project:`. The third element is a whole-node `{value}`, so
+  # a number reaches Odoo as a number rather than as its digits in quotes.
+  pushdown:
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    # Odoo's `ilike` is already substring-and-case-insensitive; it wraps the value itself.
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"] }
+    - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
+    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
+    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"] }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"] }
+    - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
+    - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
+    - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+  # Odoo pages by absolute OFFSET, not page number: `limit` is the page size and `offset`
+  # skips records already read. Without this the door made one call and returned `limit`
+  # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
+  # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 10 }
   cache: { kind: ttl, seconds: 300 }
 
 - name: invoicesUnpaidAll
@@ -119,7 +160,32 @@
       - ["payment_state", "in", ["not_paid", "partial"]]
     fields: [name, partner_id, amount_total, amount_residual, invoice_date_due, payment_state]
     load: ""
-    limit: 500
+    limit: 200
+  # See customersAll. The money and due-date filters are the ones the receivables views actually
+  # write, and they were the ones most expensive to leave graph-side: "everything owing over X"
+  # read every unpaid invoice in the book to drop most of them afterwards.
+  pushdown:
+    - { property: partner_id, op: EQUALS, argPath: "domain.-", clause: ["partner_id", "=", "{value}"] }
+    - { property: partner_id, op: IN, argPath: "domain.-", clause: ["partner_id", "in", "{values}"] }
+    - { property: payment_state, op: EQUALS, argPath: "domain.-", clause: ["payment_state", "=", "{value}"] }
+    - { property: payment_state, op: IN, argPath: "domain.-", clause: ["payment_state", "in", "{values}"] }
+    - { property: amount_total, op: GREATER_THAN, argPath: "domain.-", clause: ["amount_total", ">", "{value}"] }
+    - { property: amount_total, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_total", ">=", "{value}"] }
+    - { property: amount_total, op: LESS_THAN, argPath: "domain.-", clause: ["amount_total", "<", "{value}"] }
+    - { property: amount_total, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_total", "<=", "{value}"] }
+    - { property: amount_residual, op: GREATER_THAN, argPath: "domain.-", clause: ["amount_residual", ">", "{value}"] }
+    - { property: amount_residual, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_residual", ">=", "{value}"] }
+    - { property: amount_residual, op: LESS_THAN, argPath: "domain.-", clause: ["amount_residual", "<", "{value}"] }
+    - { property: amount_residual, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_residual", "<=", "{value}"] }
+    - { property: invoice_date_due, op: GREATER_THAN, argPath: "domain.-", clause: ["invoice_date_due", ">", "{value}"] }
+    - { property: invoice_date_due, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date_due", ">=", "{value}"] }
+    - { property: invoice_date_due, op: LESS_THAN, argPath: "domain.-", clause: ["invoice_date_due", "<", "{value}"] }
+    - { property: invoice_date_due, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date_due", "<=", "{value}"] }
+  # Odoo pages by absolute OFFSET, not page number: `limit` is the page size and `offset`
+  # skips records already read. Without this the door made one call and returned `limit`
+  # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
+  # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 10 }
   cache: { kind: ttl, seconds: 300 }
 
 - name: leadsOpenAll
@@ -137,13 +203,87 @@
       - ["partner_id", "!=", false]
     fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date]
     load: ""
-    limit: 500
+    limit: 200
+  # See customersAll for why these are declared. `load: ""` means the many2one fields come back
+  # as bare ids, so `stage_id` and `partner_id` compare against NUMBERS here, not stage names —
+  # which is exactly what the typed `{value}` slot makes expressible.
+  pushdown:
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: email_from, op: EQUALS, argPath: "domain.-", clause: ["email_from", "=", "{value}"] }
+    - { property: email_from, op: CONTAINS, argPath: "domain.-", clause: ["email_from", "ilike", "{value}"] }
+    - { property: partner_id, op: EQUALS, argPath: "domain.-", clause: ["partner_id", "=", "{value}"] }
+    - { property: partner_id, op: IN, argPath: "domain.-", clause: ["partner_id", "in", "{values}"] }
+    - { property: stage_id, op: EQUALS, argPath: "domain.-", clause: ["stage_id", "=", "{value}"] }
+    - { property: stage_id, op: IN, argPath: "domain.-", clause: ["stage_id", "in", "{values}"] }
+    - { property: probability, op: GREATER_THAN, argPath: "domain.-", clause: ["probability", ">", "{value}"] }
+    - { property: probability, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", ">=", "{value}"] }
+    - { property: probability, op: LESS_THAN, argPath: "domain.-", clause: ["probability", "<", "{value}"] }
+    - { property: probability, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", "<=", "{value}"] }
+    - { property: expected_revenue, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
+    - { property: expected_revenue, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
+    - { property: expected_revenue, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
+    - { property: expected_revenue, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", "<=", "{value}"] }
+    # Odoo compares datetimes against 'YYYY-MM-DD[ HH:MM:SS]' strings, so these stay strings.
+    - { property: create_date, op: GREATER_THAN, argPath: "domain.-", clause: ["create_date", ">", "{value}"] }
+    - { property: create_date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", ">=", "{value}"] }
+    - { property: create_date, op: LESS_THAN, argPath: "domain.-", clause: ["create_date", "<", "{value}"] }
+    - { property: create_date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", "<=", "{value}"] }
+  # Odoo pages by absolute OFFSET, not page number: `limit` is the page size and `offset`
+  # skips records already read. Without this the door made one call and returned `limit`
+  # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
+  # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 10 }
   cache: { kind: ttl, seconds: 300 }
 
 # A lead's chatter — the emails and comments on the opportunity, which is where the actual
 # state of a deal lives (the stage field says Proposition; the thread says the customer has
 # gone quiet). Comments and emails only: tracking notes ("Stage changed") are noise to a
 # reader and poison to a sentiment judge.
+# EVERY opportunity on the book — open, won and lost. The sibling `leadsOpenAll` is the
+# PIPELINE door and filters to what is still in play; at 2,000 deals it sees 1,200, so a
+# per-account question that wants won/lost counts cannot be answered through it. Verified
+# against the live book: 2,000 all / 1,200 open, with won_status in pending|won|lost.
+#
+# Odoo hides archived records by default and marks a LOST deal by archiving it, so the
+# `active` OR is what makes closed deals visible at all. Prefix notation: `|` applies to
+# the two terms that follow it; the rest of the list is ANDed, which is also why an
+# appended pushdown clause lands correctly.
+- name: leadsAll
+  kind: api
+  operation: leadsSearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    domain:
+      - "|"
+      - ["active", "=", true]
+      - ["active", "=", false]
+      # Partnerless leads excluded for the same falsy-key reason as leadsByStage.
+      - ["partner_id", "!=", false]
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active]
+    load: ""
+    limit: 200
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 25 }
+  # See customersAll for why these are declared: the source filters, and an absorbed
+  # predicate is what lets a count be pushed instead of the records walked.
+  pushdown:
+    - { property: won_status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "{value}"] }
+    - { property: won_status, op: IN, argPath: "domain.-", clause: ["won_status", "in", "{values}"] }
+    - { property: partner_id, op: EQUALS, argPath: "domain.-", clause: ["partner_id", "=", "{value}"] }
+    - { property: partner_id, op: IN, argPath: "domain.-", clause: ["partner_id", "in", "{values}"] }
+    - { property: stage_id, op: EQUALS, argPath: "domain.-", clause: ["stage_id", "=", "{value}"] }
+    - { property: stage_id, op: IN, argPath: "domain.-", clause: ["stage_id", "in", "{values}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
+    - { property: expected_revenue, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
+    - { property: expected_revenue, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
+    - { property: expected_revenue, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
+    - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"] }
+    - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"] }
+  cache: { kind: ttl, seconds: 300 }
+
+
 - name: messagesByLead
   kind: api
   keyType: int
@@ -204,7 +344,27 @@
       - ["is_company", "=", true]
     fields: [name, email, phone, city, is_company, website]
     load: ""
-    limit: 2000
+    limit: 500
+  # Same door, same fields as customersAll — so the same rules, for the same reasons.
+  pushdown:
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"] }
+    - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
+    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
+    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"] }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"] }
+    - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
+    - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+  # Odoo pages by absolute OFFSET, not page number: `limit` is the page size and `offset`
+  # skips records already read. Without this the door made one call and returned `limit`
+  # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
+  # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 20 }
   cache: { kind: ttl, seconds: 300 }
 
 # ── Back from the ACCOUNT. The business vocabulary's CustomerAccount is a spine several systems
@@ -249,7 +409,13 @@
       - ["active", "=", false]
     fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active]
     load: ""
-    limit: 500
+    limit: 200
+  # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
+  # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
+  # the partners after it come back with nothing — the starvation `batchSafe: false` exists
+  # for, arriving through `limit` instead. Paging reads the chunk out in full, so every key
+  # in it is complete; Odoo pages by absolute offset.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 25 }
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 - name: contactsByCompany
@@ -263,7 +429,13 @@
       - ["parent_id", "in", []]
     fields: [name, email, function, phone, parent_id]
     load: ""
-    limit: 500
+    limit: 200
+  # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
+  # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
+  # the partners after it come back with nothing — the starvation `batchSafe: false` exists
+  # for, arriving through `limit` instead. Paging reads the chunk out in full, so every key
+  # in it is complete; Odoo pages by absolute offset.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 25 }
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 # What was written on a partner's own record — a company or a person. The record carries
@@ -281,5 +453,11 @@
       - ["message_type", "in", ["comment", "email"]]
     fields: [res_id, body, date, author_id, subject, message_type]
     load: ""
-    limit: 500
+    limit: 200
+  # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
+  # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
+  # the partners after it come back with nothing — the starvation `batchSafe: false` exists
+  # for, arriving through `limit` instead. Paging reads the chunk out in full, so every key
+  # in it is complete; Odoo pages by absolute offset.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 50 }
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }

@@ -45,6 +45,14 @@
     - { anchorLabel: OdooBook, relationship: HAS_OPEN_LEAD, keyField: scope,
         recordKeyField: scopeKey, producer: leadsOpenAll,
         description: "Every open opportunity on the book, any stage." }
+    # The same door WIDENED to closed deals. HAS_OPEN_LEAD is the pipeline and stops at
+    # what is still in play — 1,200 of 2,000 on this book — so a per-account question that
+    # counts what was WON or LOST cannot be answered through it, and had to fan out one
+    # call per account instead. Named apart from HAS_OPEN_LEAD rather than replacing it:
+    # "the pipeline" and "every deal ever" are different questions and both get asked.
+    - { anchorLabel: OdooBook, relationship: HAS_ANY_LEAD, keyField: scope,
+        recordKeyField: scopeKey, producer: leadsAll,
+        description: "Every opportunity on the book — open, won and lost. Read won_status to tell them apart." }
     - { anchorLabel: OdooStagePipeline, relationship: HAS_LEAD, keyField: stage,
         recordKeyField: stageKey, producer: leadsByStage,
         description: "Every active lead sitting at this pipeline stage." }

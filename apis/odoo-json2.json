@@ -1,432 +1,460 @@
 {
- "openapi": "3.0.3",
- "info": {
-  "title": "Odoo JSON-2 (curated)",
-  "version": "1.0",
-  "description": "The handful of JSON-2 operations realm-odoo's producers use. POST /json/2/<model>/<method>; bearer = an Odoo API key."
- },
- "servers": [
-  {
-   "url": "http://host.docker.internal:8069"
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Odoo JSON-2 (curated)",
+    "version": "1.0",
+    "description": "The handful of JSON-2 operations realm-odoo's producers use. POST /json/2/<model>/<method>; bearer = an Odoo API key."
+  },
+  "servers": [
+    {
+      "url": "http://host.docker.internal:8069"
+    }
+  ],
+  "security": [
+    {
+      "OdooApiKey": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "OdooApiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Odoo API key (Settings -> Users -> API Keys), sent as Authorization: Bearer."
+      }
+    }
+  },
+  "paths": {
+    "/json/2/crm.lead/search_read": {
+      "post": {
+        "operationId": "leadsSearchRead",
+        "summary": "Search CRM leads/opportunities",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "domain": {
+                    "type": "array",
+                    "items": {},
+                    "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "limit": {
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "type": "integer",
+                    "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
+                  },
+                  "load": {
+                    "type": "string",
+                    "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/2/res.partner/search_read": {
+      "post": {
+        "operationId": "partnersSearchRead",
+        "summary": "Search partners (customers, contacts)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "domain": {
+                    "type": "array",
+                    "items": {},
+                    "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "limit": {
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "type": "integer",
+                    "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
+                  },
+                  "load": {
+                    "type": "string",
+                    "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/2/sale.order/search_read": {
+      "post": {
+        "operationId": "ordersSearchRead",
+        "summary": "Search sales orders",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "domain": {
+                    "type": "array",
+                    "items": {},
+                    "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "limit": {
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "type": "integer",
+                    "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
+                  },
+                  "load": {
+                    "type": "string",
+                    "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/2/account.move/search_read": {
+      "post": {
+        "operationId": "invoicesSearchRead",
+        "summary": "Search journal entries / invoices",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "domain": {
+                    "type": "array",
+                    "items": {},
+                    "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "limit": {
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "type": "integer",
+                    "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
+                  },
+                  "load": {
+                    "type": "string",
+                    "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/2/{model}/fields_get": {
+      "post": {
+        "operationId": "fieldsGet",
+        "summary": "The model's own description of its fields: labels, types, declared relations, help text, selections. The extension skill's instrument.",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "attributes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "field name -> metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/2/mail.message/search_read": {
+      "post": {
+        "operationId": "messagesSearchRead",
+        "summary": "Search and read chatter messages (mail.message)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "domain": {
+                    "type": "array",
+                    "items": {},
+                    "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "limit": {
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "type": "integer",
+                    "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
+                  },
+                  "load": {
+                    "type": "string",
+                    "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/2/calendar.event/search_read": {
+      "post": {
+        "operationId": "calendarSearchRead",
+        "summary": "Search and read calendar meetings",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "domain": {
+                    "type": "array",
+                    "items": {},
+                    "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "limit": {
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "type": "integer",
+                    "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
+                  },
+                  "load": {
+                    "type": "string",
+                    "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/2/mail.activity/search_read": {
+      "post": {
+        "operationId": "activitySearchRead",
+        "summary": "Search and read scheduled activities",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "domain": {
+                    "type": "array",
+                    "items": {},
+                    "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "limit": {
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "type": "integer",
+                    "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
+                  },
+                  "load": {
+                    "type": "string",
+                    "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
- ],
- "security": [
-  {
-   "OdooApiKey": []
-  }
- ],
- "components": {
-  "securitySchemes": {
-   "OdooApiKey": {
-    "type": "http",
-    "scheme": "bearer",
-    "description": "Odoo API key (Settings -> Users -> API Keys), sent as Authorization: Bearer."
-   }
-  }
- },
- "paths": {
-  "/json/2/crm.lead/search_read": {
-   "post": {
-    "operationId": "leadsSearchRead",
-    "summary": "Search CRM leads/opportunities",
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "properties": {
-         "domain": {
-          "type": "array",
-          "items": {},
-          "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
-         },
-         "fields": {
-          "type": "array",
-          "items": {
-           "type": "string"
-          }
-         },
-         "limit": {
-          "type": "integer"
-         },
-         "load": {
-          "type": "string",
-          "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
-         }
-        }
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "Matching records",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "array",
-         "items": {
-          "type": "object"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/json/2/res.partner/search_read": {
-   "post": {
-    "operationId": "partnersSearchRead",
-    "summary": "Search partners (customers, contacts)",
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "properties": {
-         "domain": {
-          "type": "array",
-          "items": {},
-          "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
-         },
-         "fields": {
-          "type": "array",
-          "items": {
-           "type": "string"
-          }
-         },
-         "limit": {
-          "type": "integer"
-         },
-         "load": {
-          "type": "string",
-          "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
-         }
-        }
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "Matching records",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "array",
-         "items": {
-          "type": "object"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/json/2/sale.order/search_read": {
-   "post": {
-    "operationId": "ordersSearchRead",
-    "summary": "Search sales orders",
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "properties": {
-         "domain": {
-          "type": "array",
-          "items": {},
-          "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
-         },
-         "fields": {
-          "type": "array",
-          "items": {
-           "type": "string"
-          }
-         },
-         "limit": {
-          "type": "integer"
-         },
-         "load": {
-          "type": "string",
-          "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
-         }
-        }
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "Matching records",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "array",
-         "items": {
-          "type": "object"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/json/2/account.move/search_read": {
-   "post": {
-    "operationId": "invoicesSearchRead",
-    "summary": "Search journal entries / invoices",
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "properties": {
-         "domain": {
-          "type": "array",
-          "items": {},
-          "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
-         },
-         "fields": {
-          "type": "array",
-          "items": {
-           "type": "string"
-          }
-         },
-         "limit": {
-          "type": "integer"
-         },
-         "load": {
-          "type": "string",
-          "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
-         }
-        }
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "Matching records",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "array",
-         "items": {
-          "type": "object"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/json/2/{model}/fields_get": {
-   "post": {
-    "operationId": "fieldsGet",
-    "summary": "The model's own description of its fields: labels, types, declared relations, help text, selections. The extension skill's instrument.",
-    "parameters": [
-     {
-      "name": "model",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string"
-      }
-     }
-    ],
-    "requestBody": {
-     "required": false,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "properties": {
-         "attributes": {
-          "type": "array",
-          "items": {
-           "type": "string"
-          }
-         }
-        }
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "field name -> metadata",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/json/2/mail.message/search_read": {
-   "post": {
-    "operationId": "messagesSearchRead",
-    "summary": "Search and read chatter messages (mail.message)",
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "properties": {
-         "domain": {
-          "type": "array",
-          "items": {},
-          "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
-         },
-         "fields": {
-          "type": "array",
-          "items": {
-           "type": "string"
-          }
-         },
-         "limit": {
-          "type": "integer"
-         },
-         "load": {
-          "type": "string",
-          "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
-         }
-        }
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "Matching records",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "array",
-         "items": {
-          "type": "object"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/json/2/calendar.event/search_read": {
-   "post": {
-    "operationId": "calendarSearchRead",
-    "summary": "Search and read calendar meetings",
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "properties": {
-         "domain": {
-          "type": "array",
-          "items": {},
-          "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
-         },
-         "fields": {
-          "type": "array",
-          "items": {
-           "type": "string"
-          }
-         },
-         "limit": {
-          "type": "integer"
-         },
-         "load": {
-          "type": "string",
-          "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
-         }
-        }
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "Matching records",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "array",
-         "items": {
-          "type": "object"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/json/2/mail.activity/search_read": {
-   "post": {
-    "operationId": "activitySearchRead",
-    "summary": "Search and read scheduled activities",
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "properties": {
-         "domain": {
-          "type": "array",
-          "items": {},
-          "description": "Odoo domain, e.g. [[\"probability\",\">\",50]]"
-         },
-         "fields": {
-          "type": "array",
-          "items": {
-           "type": "string"
-          }
-         },
-         "limit": {
-          "type": "integer"
-         },
-         "load": {
-          "type": "string",
-          "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
-         }
-        }
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "Matching records",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "array",
-         "items": {
-          "type": "object"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  }
- }
 }
