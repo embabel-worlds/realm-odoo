@@ -461,3 +461,72 @@
   # in it is complete; Odoo pages by absolute offset.
   paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 50 }
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+
+# THE WHOLE CHATTER BOOK, swept once. The per-anchor doors above (`messagesByPartner`,
+# `messagesByLead`) are right for a question about ONE account and wrong for a question about
+# the book: asking them across every account binds one anchor per account and the engine
+# refuses above `maxAnchors` (200). Measured 2026-09-21: 1,516 accounts had an open support
+# case, so every notes-across-the-book view died in the planner — `HealthCompanyNotesForOpenCases`
+# and its two siblings returned an ERROR, the Account Signals app withheld the CRM signals
+# entirely, and the page said so rather than calling a troubled account good news.
+#
+# One sweep instead. `model` rides on every record, so ONE door serves all three questions —
+# notes on the company, on a person there, and on a deal — and the consumer picks the side it
+# wants with `WHERE n.model = …` rather than three producers fetching the same table.
+#
+# The same shape as `companiesAll` / `leadsAll`: pinned by the literal book scope, echoed back
+# as `scopeKey`, paged by absolute offset. maxPages is high because chatter is the most
+# numerous thing in an Odoo instance by a wide margin — hitting it warns rather than silently
+# truncating.
+# EVERY partner, company and person alike. `customersAll` filters `customer_rank > 0` and
+# `companiesAll` filters `is_company = true`, so between them they see only COMPANIES — measured
+# 2026-09-21, 1,333 of them. Chatter does not respect that boundary: of 4,000 notes written on
+# `res.partner`, only 1,333 were on a partner either door could reach; the other 2,667 were
+# written on CONTACTS, the people at those companies, and were unreachable except one company
+# at a time through `contactsByCompany`. A notes-across-the-book question needs both sides in
+# one sweep, and `is_company` is what separates them afterwards.
+- name: partnersAll
+  kind: api
+  operation: partnersSearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    # No domain at all: the whole partner table, companies and people together.
+    domain: []
+    fields: [name, email, phone, city, is_company, website, parent_id]
+    load: ""
+    limit: 500
+  pushdown:
+    - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 40 }
+  cache: { kind: ttl, seconds: 300 }
+
+- name: messagesAll
+  kind: api
+  operation: messagesSearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    domain:
+      # Both sides of the vocabulary's AccountNote: what was written on a partner (the company
+      # or a contact there) and what was written on an opportunity.
+      - ["model", "in", ["res.partner", "crm.lead"]]
+      - ["message_type", "in", ["comment", "email"]]
+    fields: [model, res_id, body, date, author_id, subject, message_type]
+    load: ""
+    limit: 500
+  pushdown:
+    - { property: model, op: EQUALS, argPath: "domain.-", clause: ["model", "=", "{value}"] }
+    - { property: model, op: IN, argPath: "domain.-", clause: ["model", "in", "{values}"] }
+    - { property: res_id, op: EQUALS, argPath: "domain.-", clause: ["res_id", "=", "{value}"] }
+    - { property: res_id, op: IN, argPath: "domain.-", clause: ["res_id", "in", "{values}"] }
+    - { property: message_type, op: EQUALS, argPath: "domain.-", clause: ["message_type", "=", "{value}"] }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 40 }
+  cache: { kind: ttl, seconds: 300 }

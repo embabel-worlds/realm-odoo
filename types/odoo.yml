@@ -96,6 +96,13 @@
     - { anchorLabel: OdooBook, relationship: HAS_COMPANY, keyField: scope,
         recordKeyField: scopeKey, producer: companiesAll,
         description: "Every company the CRM knows — customers and prospects alike." }
+    # BOTH SIDES. HAS_CUSTOMER and HAS_COMPANY each reach companies only; this reaches the
+    # PEOPLE too, which is what a question about notes needs — most chatter is written on a
+    # contact, not on the company record. Split them afterwards on `is_company`, which Odoo
+    # spells as the STRING 'true'/'false', not a boolean.
+    - { anchorLabel: OdooBook, relationship: HAS_PARTNER, keyField: scope,
+        recordKeyField: scopeKey, producer: partnersAll,
+        description: "Every partner in the book — companies AND the people at them. The door for a question that must not stop at company records." }
     # Per-element join over the meeting's attendee LIST — one meeting fans out to each
     # attendee partner, so "who am I meeting and what do they owe us" is one traversal.
     - { anchorLabel: OdooMeeting, relationship: MEETING_WITH, keyField: partner_ids,
@@ -207,7 +214,23 @@
     res_id: "The id of the record it was written on."
     author_id: "The author's partner id."
     leadKey: "Echo of the lead this message was fetched under."
+    # WHICH KIND of record `res_id` points at — `res.partner` (a company or a contact) or
+    # `crm.lead` (a deal). Only the book sweep carries it: the per-anchor doors already know,
+    # because each pins one `model` in its own domain. A book-wide reader does not, and without
+    # it a note on a deal and a note on a company are indistinguishable once fetched.
+    model: "The Odoo model `res_id` refers to: 'res.partner' or 'crm.lead'."
+    scopeKey: "Echo of the book scope this message was fetched under."
   virtualJoins:
+    # THE BOOK'S WHOLE CHATTER, one sweep. The three anchored joins below are right for one
+    # account and refuse across the book — see `messagesAll` in producers/ for the measurement.
+    # A reader takes the side it wants with `WHERE n.model = 'res.partner' | 'crm.lead'` and
+    # joins `n.res_id` to the customer or lead sweep graph-side, which costs nothing.
+    - { anchorLabel: OdooBook, relationship: HAS_MESSAGE, keyField: scope,
+        recordKeyField: scopeKey, producer: messagesAll,
+        description: "Every note and email in the book's chatter, on companies, contacts and deals alike — the door for notes questions asked across accounts rather than about one." }
+    - { anchorLabel: OdooBook, relationship: HAS_NOTE, keyField: scope,
+        recordKeyField: scopeKey, producer: messagesAll,
+        description: "The same sweep, by the business vocabulary's name for it." }
     - { anchorLabel: OdooLead, relationship: HAS_MESSAGE, keyField: id, recordKeyField: leadKey,
         producer: messagesByLead,
         description: "The opportunity's chatter thread — recent interactions on the deal." }
