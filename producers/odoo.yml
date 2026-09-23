@@ -264,8 +264,11 @@
       - ["partner_id", "!=", false]
     fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active]
     load: ""
-    limit: 200
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 25 }
+    limit: 1000
+  # 1,000 a page: the book's 2,000 leads are three round trips, not eleven. It does NOT make the
+  # sweep faster — measured 2026-09-23 it is ~10 s either way, because Odoo's search_read cost is
+  # per record (the fields list, partner_id resolution), not per call. Fewer calls is all it buys.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 5 }
   # See customersAll for why these are declared: the source filters, and an absorbed
   # predicate is what lets a count be pushed instead of the records walked.
   pushdown:
