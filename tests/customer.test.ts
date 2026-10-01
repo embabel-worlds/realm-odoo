@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { entityForTest, mockGateway } from "@embabel/runtime-types";
-import type { GenericGatewayContext } from "@embabel/runtime-types";
+import type { OdooWriteGateway } from "../src/api/odoo";
 import { OdooCustomer } from "../src/api/customer";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function customer(odoo: Record<string, (args: any) => any>, id: unknown = "12114") {
-  return entityForTest(OdooCustomer, { id: id as string, name: "Acme Corporation" }, mockGateway<GenericGatewayContext>({ odoo }));
+  return entityForTest(OdooCustomer, { id: id as string, name: "Acme Corporation" }, mockGateway<OdooWriteGateway>({ odoo }));
 }
 
 describe("OdooCustomer", () => {

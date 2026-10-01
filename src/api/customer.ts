@@ -24,18 +24,15 @@ export interface CallBooking {
  * The method names are the ones any CRM realm offers on its customer, so code written against one
  * stack reads the same against another.
  */
-export class OdooCustomer extends Entity {
+export class OdooCustomer extends Entity<OdooWriteGateway> {
   name?: string;
   email?: string;
   website?: string;
 
-  private get api(): OdooWriteGateway {
-    return this.gateway as unknown as OdooWriteGateway;
-  }
 
   /** Add an internal note to the customer's history. The customer never sees it; nobody is emailed. */
   async addNote(text: string): Promise<number> {
-    const r = await this.api.odoo.partnerMessagePost({
+    const r = await this.gateway.odoo.partnerMessagePost({
       ids: [odooId(this.id)], body: text, message_type: "comment", subtype_xmlid: "mail.mt_note",
     });
     return Array.isArray(r) ? r[0] : r;
@@ -43,7 +40,7 @@ export class OdooCustomer extends Entity {
 
   /** Schedule follow-up work on the customer, due on a date, optionally assigned to someone. */
   async scheduleFollowUp(followUp: FollowUp): Promise<number> {
-    const ids = await this.api.odoo.partnerActivitySchedule(activityArgs(odooId(this.id), followUp));
+    const ids = await this.gateway.odoo.partnerActivitySchedule(activityArgs(odooId(this.id), followUp));
     return ids[0];
   }
 
@@ -52,7 +49,7 @@ export class OdooCustomer extends Entity {
     const start = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(call.start) ? call.start : `${call.start}Z`);
     if (Number.isNaN(start.getTime())) throw new Error(`start is not a date-time: '${call.start}'`);
     const stop = new Date(start.getTime() + (call.minutes ?? 30) * 60_000);
-    const ids = await this.api.odoo.calendarEventCreate({
+    const ids = await this.gateway.odoo.calendarEventCreate({
       vals_list: [{
         name: call.title,
         start: odooDateTime(start),

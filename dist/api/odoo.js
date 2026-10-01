@@ -1,7 +1,7 @@
 "use strict";
 /*
- * The slice of the gateway these types call: the realm's own write verbs (apis/odoo-json2.json),
- * typed here because the generated surface types the gateway loosely.
+ * The slice of the gateway these types call, the realm's own write verbs in apis/odoo-json2.json.
+ * Each type names it as Entity's type argument, so this.gateway is typed with exactly these.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activityArgs = activityArgs;

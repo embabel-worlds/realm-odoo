@@ -8,12 +8,9 @@ class OdooLead extends runtime_types_1.Entity {
     name;
     expected_revenue;
     probability;
-    get api() {
-        return this.gateway;
-    }
     /** Schedule follow-up work on the deal, due on a date, optionally assigned to someone. */
     async scheduleFollowUp(followUp) {
-        const ids = await this.api.odoo.leadActivitySchedule((0, odoo_1.activityArgs)((0, odoo_1.odooId)(this.id), followUp));
+        const ids = await this.gateway.odoo.leadActivitySchedule((0, odoo_1.activityArgs)((0, odoo_1.odooId)(this.id), followUp));
         return ids[0];
     }
     /**
@@ -23,7 +20,7 @@ class OdooLead extends runtime_types_1.Entity {
     async update(fields) {
         if (Object.keys(fields).length === 0)
             throw new Error("update needs at least one field");
-        return this.api.odoo.leadWrite({ ids: [(0, odoo_1.odooId)(this.id)], vals: fields });
+        return this.gateway.odoo.leadWrite({ ids: [(0, odoo_1.odooId)(this.id)], vals: fields });
     }
 }
 exports.OdooLead = OdooLead;

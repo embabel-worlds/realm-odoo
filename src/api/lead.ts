@@ -2,18 +2,15 @@ import { Entity } from "@embabel/runtime-types";
 import { activityArgs, odooId, type FollowUp, type OdooWriteGateway } from "./odoo";
 
 /** An opportunity in Odoo (`crm.lead`), with what can be done to it once found. */
-export class OdooLead extends Entity {
+export class OdooLead extends Entity<OdooWriteGateway> {
   name?: string;
   expected_revenue?: number;
   probability?: number;
 
-  private get api(): OdooWriteGateway {
-    return this.gateway as unknown as OdooWriteGateway;
-  }
 
   /** Schedule follow-up work on the deal, due on a date, optionally assigned to someone. */
   async scheduleFollowUp(followUp: FollowUp): Promise<number> {
-    const ids = await this.api.odoo.leadActivitySchedule(activityArgs(odooId(this.id), followUp));
+    const ids = await this.gateway.odoo.leadActivitySchedule(activityArgs(odooId(this.id), followUp));
     return ids[0];
   }
 
@@ -23,6 +20,6 @@ export class OdooLead extends Entity {
    */
   async update(fields: Record<string, unknown>): Promise<boolean> {
     if (Object.keys(fields).length === 0) throw new Error("update needs at least one field");
-    return this.api.odoo.leadWrite({ ids: [odooId(this.id)], vals: fields });
+    return this.gateway.odoo.leadWrite({ ids: [odooId(this.id)], vals: fields });
   }
 }
