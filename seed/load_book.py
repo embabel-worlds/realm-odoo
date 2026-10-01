@@ -22,6 +22,7 @@ survive only where Odoo has a field of its own for them.
 """
 
 import argparse
+import datetime
 import csv
 import json
 import os
@@ -66,20 +67,27 @@ class Odoo:
         return self.call(model, "create", vals_list=[vals])[0], True
 
 
-def rows(book, name):
+def rows(book, name, optional=False):
+    if optional and not (book / name).exists():
+        return []
     with open(book / name, newline="") as f:
         return list(csv.DictReader(f))
 
 
 def load(odoo, book):
-    made = {"salespeople": 0, "accounts": 0, "contacts": 0, "opportunities": 0, "notes": 0}
+    made = {"salespeople": 0, "accounts": 0, "contacts": 0, "opportunities": 0, "notes": 0, "meetings": 0}
     accounts, contacts, deals = rows(book, "crm/accounts.csv"), rows(book, "crm/contacts.csv"), rows(book, "crm/opportunities.csv")
+    # The manual history: notes people wrote and calls they booked, apart from the one note
+    # each record is born with. Optional, because a book need not have any.
+    notes, meetings = rows(book, "crm/notes.csv", optional=True), rows(book, "crm/meetings.csv", optional=True)
 
     # Owners become real Odoo users so the pipeline is somebody's, and so a note can be
     # written in the voice of the person the book says wrote it. no_reset_password: a fresh
     # user otherwise triggers an invitation email to an address that does not exist.
     users = {}
-    for name in sorted({r["owner"] for r in accounts + contacts + deals if r["owner"]}):
+    people = [r["owner"] for r in accounts + contacts + deals] + [n["author"] for n in notes] + \
+             [m["organizer"] for m in meetings]
+    for name in sorted({p for p in people if p}):
         login = name.lower().replace(" ", ".") + "@vendor.example"
         uid, new = odoo.ensure("res.users", [["login", "=", login]], {"name": name, "login": login})
         made["salespeople"] += new
@@ -125,6 +133,7 @@ def load(odoo, book):
             made["accounts"] += 1
             note("res.partner", pid, a["note"], a["owner"], a["created_on"])
 
+    person = {}
     for c in contacts:
         cid = country(c["country"])
         pid, new = odoo.ensure("res.partner", [["ref", "=", MARK + c["source_id"]]], {
@@ -132,6 +141,7 @@ def load(odoo, book):
             "parent_id": company[c["account_key"]], "email": c["email"], "phone": c["phone"],
             "function": c["job_title"], "city": c["city"], "country_id": cid,
             "state_id": state(c["region"], cid), "user_id": users[c["owner"]][0]})
+        person[c["email"]] = pid
         if new:
             made["contacts"] += 1
             note("res.partner", pid, c["note"], c["owner"], c["last_activity_on"])
@@ -151,7 +161,7 @@ def load(odoo, book):
         if not odoo.find("crm.lead", [["stage_id", "=", s["id"]]]):
             odoo.call("crm.stage", "write", ids=[s["id"]], vals={"fold": True})
 
-    teams, tags = {}, {}
+    teams, tags, lead = {}, {}, {}
     for d in deals:
         if d["pipeline"] not in teams:
             teams[d["pipeline"]] = odoo.ensure("crm.team", [["name", "=", d["pipeline"]]], {"name": d["pipeline"]})[0]
@@ -168,6 +178,7 @@ def load(odoo, book):
         if d["status"] == "open":
             vals["stage_id"] = stages[d["stage"]]
         lid, new = odoo.ensure("crm.lead", [["name", "=", d["title"]], ["partner_id", "=", partner]], vals)
+        lead[d["source_id"]] = lid
         if not new:
             continue
         made["opportunities"] += 1
@@ -180,6 +191,32 @@ def load(odoo, book):
             # moves, and a value written alongside the stage is the one that loses.
             odoo.call("crm.lead", "write", ids=[lid], vals={"probability": 100 * float(d["probability"])})
         note("crm.lead", lid, d["note"], d["owner"], d["modified_on"])
+
+    # A history note is not tied to a record's birth, so it cannot ride `if new` like the ones
+    # above; it is looked up instead — same record, same author, same day, same opening words —
+    # which is what makes a second run, or a run over an older load, add only what is missing.
+    for n in notes:
+        model, rid = ("crm.lead", lead[n["opportunity_id"]]) if n["opportunity_id"] else ("res.partner", company[n["account_key"]])
+        if not odoo.find("mail.message", [["model", "=", model], ["res_id", "=", rid],
+                                          ["author_id", "=", users[n["author"]][1]],
+                                          ["date", "=", f"{n['written_on']} 09:00:00"],
+                                          ["body", "ilike", n["body"][:60]]]):
+            note(model, rid, n["body"], n["author"], n["written_on"])
+
+    # Calls on the calendar, with the company and the person as attendees. Invitations are
+    # suppressed: the attendees' addresses are fictional, and a seed must never send mail.
+    for m in meetings:
+        start = datetime.datetime.fromisoformat(m["starts_at"])
+        stop = start + datetime.timedelta(minutes=int(m["minutes"]))
+        if odoo.find("calendar.event", [["name", "=", m["title"]], ["start", "=", m["starts_at"]]]):
+            continue
+        attendees = [company[m["account_key"]]] + ([person[m["attendee_email"]]] if m["attendee_email"] in person else [])
+        odoo.call("calendar.event", "create", vals_list=[{
+            "name": m["title"], "start": m["starts_at"], "stop": stop.strftime("%Y-%m-%d %H:%M:%S"),
+            "user_id": users[m["organizer"]][0], "partner_ids": [[6, 0, attendees]],
+            "description": f"Booked {m['booked_on']} from the overdue-invoice list."}],
+            context={"no_mail_to_attendees": True})
+        made["meetings"] += 1
     return made
 
 
@@ -188,11 +225,15 @@ def remove(odoo):
                                            fields=["id"], load="", context={"active_test": False})]
     leads = [l["id"] for l in odoo.call("crm.lead", "search_read", domain=[["partner_id", "in", partners]],
                                         fields=["id"], load="", context={"active_test": False})]
+    events = [e["id"] for e in odoo.call("calendar.event", "search_read", domain=[["partner_ids", "in", partners]],
+                                         fields=["id"], load="", context={"active_test": False})] if partners else []
+    if events:
+        odoo.call("calendar.event", "unlink", ids=events)
     if leads:
         odoo.call("crm.lead", "unlink", ids=leads)
     if partners:
         odoo.call("res.partner", "unlink", ids=partners)
-    print(f"removed {len(leads)} opportunities and {len(partners)} partners. Salespeople, stages, "
+    print(f"removed {len(events)} meetings, {len(leads)} opportunities and {len(partners)} partners. Salespeople, stages, "
           f"teams and tags are left: they are configuration, and other records may now use them.")
 
 
@@ -212,7 +253,8 @@ def main():
     made = load(odoo, args.book)
     print("odoo: created " + ", ".join(f"{n} {what}" for what, n in made.items()) if any(made.values())
           else "odoo: everything in the book was already there; nothing changed")
-    print("odoo: not carried — created-on dates of accounts, contacts and opportunities (Odoo stamps its own);\n"
+    print("odoo: not carried — created-on dates of accounts, contacts and opportunities (Odoo stamps its own),\n"
+          "      and the day each meeting was booked, which is in its description instead;\n"
           "      annual revenue and headcount have no CRM field and are in each company's internal notes.")
 
 
