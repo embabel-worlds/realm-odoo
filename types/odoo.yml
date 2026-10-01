@@ -58,8 +58,10 @@
         description: "Every active lead sitting at this pipeline stage." }
     # EVERY deal with the customer: open, won and lost. The two doors above are the pipeline;
     # this is the history, and a question about an account needs the history.
+    # materializedKeyField: once the book's leads are swept, a customer's opportunities are the swept
+    # leads whose partner_id is its id — no fetch per customer (embabel/me#1489).
     - { anchorLabel: OdooCustomer, relationship: HAS_OPPORTUNITY, keyField: id,
-        recordKeyField: partner_id, producer: leadsByPartner,
+        recordKeyField: partner_id, producer: leadsByPartner, materializedKeyField: partner_id,
         description: "Every opportunity with this customer — open, won or lost." }
 
 - name: OdooCustomer
@@ -114,8 +116,11 @@
     # account's domain with `website ilike`, a SUBSTRING match, and recordKeyField is `website`
     # and NOT an echo of the asked key: read through the spine, `https://www.stark.com` is
     # stark.com and `https://notstark.com` is not, so a stray is left unlinked.
+    # ridesHub: when a query has already swept the book (`(:OdooBook {scope:'all'})-[:HAS_CUSTOMER]->`),
+    # this edge is answered from those customers by the account's domain — the spine's own key —
+    # instead of one fetch per account, which is refused above 200 accounts (embabel/me#1489).
     - { anchorLabel: CustomerAccount, relationship: TRACKED_AS, keyField: accountKey,
-        recordKeyField: website, producer: customersByWebsite,
+        recordKeyField: website, producer: customersByWebsite, ridesHub: true,
         description: "Odoo's record of a customer account, matched on the company's website." }
 
 - name: OdooInvoice
