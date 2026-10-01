@@ -1,3 +1,2 @@
-
-# Compose reads a .env beside the file; anything in one is local to this machine.
-stack/.env
+node_modules/
+.idea/
