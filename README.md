@@ -82,9 +82,22 @@ parameter, and all sixteen battery questions pass — money ones equal to their 
 
 - **Verified live**: everything above, against Odoo 19 (2026-08) demo data — including the
   battery, the app's data calls, and the record deep links (`/odoo/<model>/<id>`).
-- **Read-only by design (v1)**: no `create`/`write` verbs yet. When they come, they go
-  through the API — record rules, chatter and computed fields are ORM-enforced, and a write
-  around the middle tier is a defect, not a shortcut.
+- **Writes, through the API only**: five verbs, each Odoo's own method on the record, so record
+  rules, chatter and computed fields stay ORM-enforced; a write around the middle tier would be
+  a defect, not a shortcut.
+  - `partnerMessagePost`: an internal note on a customer. It never emails anyone.
+  - `partnerActivitySchedule` and `leadActivitySchedule`: a to-do on a customer or a deal, due on
+    a date and optionally assigned to someone.
+  - `calendarEventCreate`: a meeting, such as a call with the customer. Pass
+    `context: {no_mail_to_attendees: true}` to book it without sending invitations.
+  - `leadWrite`: overwrite fields on an opportunity. It exists so a world can see it and refuse
+    it; nothing in this realm needs it.
+
+  Each declares, as `x-embabel-effect` in `apis/odoo-json2.json`, what it changes, whether and how
+  it can be undone, and which arguments identify a repeat. A host uses that to decide who must
+  approve a call and to avoid making it twice; today's host does not read it yet.
+  `tests/verify-writes.sh` calls every verb through the appliance, reconciles the result against
+  Odoo, and undoes it; `verify.sh` runs it only with `VERIFY_WRITES=1`.
 - **Known boundaries**: leads without a partner are excluded from partner-joined doors
   (Odoo spells "no partner" as `false`; the engine now drops such keys at the seam, and the
   producer's domain filter also skips the wasted fetch); Odoo demo data genuinely contains duplicate
