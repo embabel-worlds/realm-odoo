@@ -41,7 +41,9 @@ its Odoo record, and ships the tests that prove the numbers.
   sentiment from each deal's own chatter thread. Exact figures travel beside the labels and
   prose in both.
 - `seed/` — a demo book of REAL companies with fictional debts, deals, chatter arcs and
-  meetings, created through Odoo's own API; gated, idempotent, removable.
+  meetings, created through Odoo's own API; gated, idempotent, removable. `seed/load_book.py`
+  also loads a book's manual history when it has one — `crm/notes.csv`, back-dated in their
+  authors' names, and `crm/meetings.csv` as calendar events, invitations suppressed.
 - `apps/prospect.*` — pipeline × receivables per customer in Odoo's visual idiom, with
   an AI read grounded on each card's rows, an Ask box showing the generated Virtual Cypher,
   and the `<x>Id` linking convention: names jump to cards or open the record in Odoo. The
