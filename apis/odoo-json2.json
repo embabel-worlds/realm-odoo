@@ -455,6 +455,367 @@
           }
         }
       }
+    },
+    "/json/2/res.partner/message_post": {
+      "post": {
+        "operationId": "partnerMessagePost",
+        "summary": "Post an internal note on a customer's chatter",
+        "description": "Writes a note into the customer's history in Odoo, where the account team reads it. `subtype_xmlid: mail.mt_note` keeps it internal: it notifies no follower and never emails the customer.",
+        "x-embabel-effect": {
+          "writes": "an internal note in the customer's history",
+          "reversible": "yes: delete the note in Odoo",
+          "idempotencyKey": [
+            "ids",
+            "body"
+          ]
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids",
+                  "body",
+                  "message_type",
+                  "subtype_xmlid"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    },
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "description": "Exactly one record id: Odoo posts to a single record."
+                  },
+                  "body": {
+                    "type": "string",
+                    "description": "The note, as HTML or plain text."
+                  },
+                  "message_type": {
+                    "type": "string",
+                    "enum": [
+                      "comment"
+                    ],
+                    "default": "comment",
+                    "description": "Always `comment`. Odoo's own default is `notification`, which reads as a system event rather than something a person wrote."
+                  },
+                  "subtype_xmlid": {
+                    "type": "string",
+                    "enum": [
+                      "mail.mt_note"
+                    ],
+                    "default": "mail.mt_note",
+                    "description": "An internal note. Never `mail.mt_comment`, which emails followers."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The id of the posted message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/2/calendar.event/create": {
+      "post": {
+        "operationId": "calendarEventCreate",
+        "summary": "Book a calendar event, such as a call with a customer",
+        "description": "Creates a meeting in Odoo's calendar. Attendees named by partner id receive Odoo's invitation unless the context says otherwise, so a demo books with `context: {no_mail_to_attendees: true}`.",
+        "x-embabel-effect": {
+          "writes": "a calendar event, and invitations to its attendees",
+          "reversible": "partly: the event can be deleted, an invitation already sent cannot",
+          "idempotencyKey": [
+            "vals_list.name",
+            "vals_list.start",
+            "vals_list.partner_ids"
+          ]
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "vals_list"
+                ],
+                "properties": {
+                  "vals_list": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "name",
+                        "start",
+                        "stop"
+                      ],
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "start": {
+                          "type": "string",
+                          "description": "UTC, `YYYY-MM-DD HH:MM:SS`."
+                        },
+                        "stop": {
+                          "type": "string"
+                        },
+                        "partner_ids": {
+                          "type": "array",
+                          "items": {},
+                          "description": "Attendees, as Odoo's command list: [[6, 0, [partnerId, ...]]]."
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "user_id": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  "context": {
+                    "type": "object",
+                    "description": "e.g. {\"no_mail_to_attendees\": true} to book without emailing anyone."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ids of the created events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/2/crm.lead/write": {
+      "post": {
+        "operationId": "leadWrite",
+        "summary": "Change fields on a lead or opportunity",
+        "description": "Edits an opportunity in place: stage, expected revenue, probability, close date. Declared so a world can see it exists and refuse it; the account-health demo never grants it.",
+        "x-embabel-effect": {
+          "writes": "fields of an existing opportunity, overwriting what was there",
+          "reversible": "only by writing the previous values back, which Odoo does not keep for every field",
+          "idempotencyKey": [
+            "ids",
+            "vals"
+          ]
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids",
+                  "vals"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    },
+                    "minItems": 1
+                  },
+                  "vals": {
+                    "type": "object",
+                    "description": "Field name to new value."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "True when written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/2/res.partner/activity_schedule": {
+      "post": {
+        "operationId": "partnerActivitySchedule",
+        "summary": "Schedule a follow-up activity (a to-do) on a customer",
+        "description": "Creates follow-up work against a customer, due on a date, assigned to a person. Odoo's own scheduling method on the record, so no install-specific model id is needed. Without `user_id` the activity is unassigned.",
+        "x-embabel-effect": {
+          "writes": "a scheduled activity on a customer",
+          "reversible": "yes: mark it done or cancel it",
+          "idempotencyKey": [
+            "ids",
+            "summary",
+            "date_deadline"
+          ]
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids",
+                  "summary",
+                  "date_deadline"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    },
+                    "minItems": 1,
+                    "description": "The record(s) to schedule against; one activity each."
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "date_deadline": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "user_id": {
+                    "type": "integer",
+                    "description": "The Odoo user it is assigned to."
+                  },
+                  "act_type_xmlid": {
+                    "type": "string",
+                    "description": "Activity type, e.g. mail.mail_activity_data_todo (to-do) or mail.mail_activity_data_call (call). Defaults to the model's default type."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ids of the created activities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json/2/crm.lead/activity_schedule": {
+      "post": {
+        "operationId": "leadActivitySchedule",
+        "summary": "Schedule a follow-up activity (a to-do) on a lead or opportunity",
+        "description": "Creates follow-up work against a lead or opportunity, due on a date, assigned to a person. Odoo's own scheduling method on the record, so no install-specific model id is needed. Without `user_id` the activity is unassigned.",
+        "x-embabel-effect": {
+          "writes": "a scheduled activity on a lead or opportunity",
+          "reversible": "yes: mark it done or cancel it",
+          "idempotencyKey": [
+            "ids",
+            "summary",
+            "date_deadline"
+          ]
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids",
+                  "summary",
+                  "date_deadline"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    },
+                    "minItems": 1,
+                    "description": "The record(s) to schedule against; one activity each."
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "date_deadline": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "user_id": {
+                    "type": "integer",
+                    "description": "The Odoo user it is assigned to."
+                  },
+                  "act_type_xmlid": {
+                    "type": "string",
+                    "description": "Activity type, e.g. mail.mail_activity_data_todo (to-do) or mail.mail_activity_data_call (call). Defaults to the model's default type."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ids of the created activities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

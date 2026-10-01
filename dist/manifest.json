@@ -1,0 +1,264 @@
+{
+  "version": 1,
+  "generatedAt": "2026-10-01T18:18:06.614Z",
+  "entries": [
+    {
+      "namespace": "customer",
+      "name": "addNote",
+      "description": "Add an internal note to the customer's history. The customer never sees it; nobody is emailed.",
+      "inputSchema": {
+        "type": "string"
+      },
+      "outputSchema": {
+        "type": "number"
+      },
+      "onType": "OdooCustomer",
+      "className": "OdooCustomer"
+    },
+    {
+      "namespace": "customer",
+      "name": "bookCall",
+      "description": "Book a call with the customer in Odoo's calendar. No invitation is sent unless asked for.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string"
+          },
+          "minutes": {
+            "type": "number"
+          },
+          "description": {
+            "type": "string"
+          },
+          "sendInvitation": {
+            "oneOf": [
+              {
+                "type": "undefined"
+              },
+              {
+                "type": "undefined"
+              }
+            ]
+          }
+        },
+        "required": [
+          "title",
+          "start"
+        ]
+      },
+      "outputSchema": {
+        "type": "number"
+      },
+      "onType": "OdooCustomer",
+      "className": "OdooCustomer"
+    },
+    {
+      "namespace": "customer",
+      "name": "neighbors",
+      "description": "Who/what this entity is connected to, related to, or works with in the knowledge graph. Inherited by every pack type, so a new type is graph- navigable for free. Walks outward `hops` (1–3, default 1); optionally filter relationship types (CSV) and cap with `limit`. Returns the connected nodes nearest-first; empty if this node isn't persisted yet.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hops": {
+            "type": "number"
+          },
+          "relTypes": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "hops": {
+              "type": "number"
+            },
+            "relPath": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "hops"
+          ]
+        }
+      },
+      "onType": "OdooCustomer",
+      "className": "OdooCustomer"
+    },
+    {
+      "namespace": "customer",
+      "name": "scheduleFollowUp",
+      "description": "Schedule follow-up work on the customer, due on a date, optionally assigned to someone.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string"
+          },
+          "due": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "assigneeUserId": {
+            "type": "number"
+          },
+          "kind": {
+            "oneOf": [
+              {
+                "type": "string",
+                "const": "todo"
+              },
+              {
+                "type": "string",
+                "const": "call"
+              }
+            ]
+          }
+        },
+        "required": [
+          "summary",
+          "due"
+        ]
+      },
+      "outputSchema": {
+        "type": "number"
+      },
+      "onType": "OdooCustomer",
+      "className": "OdooCustomer"
+    },
+    {
+      "namespace": "lead",
+      "name": "neighbors",
+      "description": "Who/what this entity is connected to, related to, or works with in the knowledge graph. Inherited by every pack type, so a new type is graph- navigable for free. Walks outward `hops` (1–3, default 1); optionally filter relationship types (CSV) and cap with `limit`. Returns the connected nodes nearest-first; empty if this node isn't persisted yet.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hops": {
+            "type": "number"
+          },
+          "relTypes": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "hops": {
+              "type": "number"
+            },
+            "relPath": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "hops"
+          ]
+        }
+      },
+      "onType": "OdooLead",
+      "className": "OdooLead"
+    },
+    {
+      "namespace": "lead",
+      "name": "scheduleFollowUp",
+      "description": "Schedule follow-up work on the deal, due on a date, optionally assigned to someone.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string"
+          },
+          "due": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "assigneeUserId": {
+            "type": "number"
+          },
+          "kind": {
+            "oneOf": [
+              {
+                "type": "string",
+                "const": "todo"
+              },
+              {
+                "type": "string",
+                "const": "call"
+              }
+            ]
+          }
+        },
+        "required": [
+          "summary",
+          "due"
+        ]
+      },
+      "outputSchema": {
+        "type": "number"
+      },
+      "onType": "OdooLead",
+      "className": "OdooLead"
+    },
+    {
+      "namespace": "lead",
+      "name": "update",
+      "description": "Overwrite fields on the deal: stage, expected revenue, probability, close date. What was there is not kept, so this is the call a world is most likely to refuse.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "boolean"
+      },
+      "onType": "OdooLead",
+      "className": "OdooLead"
+    }
+  ]
+}

@@ -234,4 +234,13 @@ for meeting, customer in [("Qantas quarterly review", "Qantas"), ("Atlassian rol
 sys.exit(1 if bad else 0)
 PYEOF
 
+echo "== L8: the write verbs, written and undone =="
+# Opt-in: this leg writes to the Odoo it is pointed at, and someone may point this script at a
+# customer's install. It undoes everything it writes, but writing at all should be a decision.
+if [ "$VERIFY_WRITES" = 1 ]; then
+  ODOO="$ODOO" ODOO_KEY="$ODOO_KEY" APPLIANCE="$APPLIANCE" AUTH="$AUTH" sh "$(dirname "$0")/verify-writes.sh" || fail=1
+else
+  echo "  SKIP: set VERIFY_WRITES=1 to exercise the write verbs (each is undone afterwards)"
+fi
+
 [ "$fail" = 0 ] && echo "ALL CHECKS PASS" || { echo "DRIFT DETECTED"; exit 1; }

@@ -78,13 +78,53 @@ its Odoo record, and ships the tests that prove the numbers.
 Green means: figures reconcile against Odoo to the cent, every view answers with every
 parameter, and all sixteen battery questions pass — money ones equal to their views.
 
+## Working on what you find
+
+A customer or a deal found by a query can be worked on where it is found. `OdooCustomer` and
+`OdooLead` carry methods, written in TypeScript in `src/api/`:
+
+| Type | Method | Does |
+|---|---|---|
+| `OdooCustomer` | `addNote(text)` | an internal note in the customer's history; nobody is emailed |
+| | `scheduleFollowUp({summary, due, note?, assigneeUserId?, kind?})` | a to-do or a call to make, due on a date |
+| | `bookCall({title, start, minutes?, description?, sendInvitation?})` | a meeting with the customer; no invitation unless asked |
+| `OdooLead` | `scheduleFollowUp(...)` | the same, on a deal |
+| | `update(fields)` | overwrites fields on the deal |
+
+```js
+const { rows } = await gateway.cypher.query({ cypher: `
+  MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer) WHERE c.name = 'Acme Corporation' RETURN c` });
+state.set("acme", rows[0].c);                       // bound with its type's methods
+const acme = state.get("acme");
+await acme.addNote("Second failed payment this month; chasing.");
+await acme.bookCall({ title: "Payment review", start: "2026-10-20T15:00:00" });
+```
+
+Read with `gateway.cypher.query`, whose rows keep their type; `gateway.kg.query` returns plain
+rows for answering questions. Each method calls exactly one of the write verbs below, so what can
+change in Odoo is what `apis/odoo-json2.json` declares. To change a method: edit `src/api/`,
+`npm test`, `npm run build`, and commit `dist/` with it.
+
 ## Honest ledger
 
 - **Verified live**: everything above, against Odoo 19 (2026-08) demo data — including the
   battery, the app's data calls, and the record deep links (`/odoo/<model>/<id>`).
-- **Read-only by design (v1)**: no `create`/`write` verbs yet. When they come, they go
-  through the API — record rules, chatter and computed fields are ORM-enforced, and a write
-  around the middle tier is a defect, not a shortcut.
+- **Writes, through the API only**: five verbs, each Odoo's own method on the record, so record
+  rules, chatter and computed fields stay ORM-enforced; a write around the middle tier would be
+  a defect, not a shortcut.
+  - `partnerMessagePost`: an internal note on a customer. It never emails anyone.
+  - `partnerActivitySchedule` and `leadActivitySchedule`: a to-do on a customer or a deal, due on
+    a date and optionally assigned to someone.
+  - `calendarEventCreate`: a meeting, such as a call with the customer. Pass
+    `context: {no_mail_to_attendees: true}` to book it without sending invitations.
+  - `leadWrite`: overwrite fields on an opportunity. It exists so a world can see it and refuse
+    it; nothing in this realm needs it.
+
+  Each declares, as `x-embabel-effect` in `apis/odoo-json2.json`, what it changes, whether and how
+  it can be undone, and which arguments identify a repeat. A host uses that to decide who must
+  approve a call and to avoid making it twice; today's host does not read it yet.
+  `tests/verify-writes.sh` calls every verb through the appliance, reconciles the result against
+  Odoo, and undoes it; `verify.sh` runs it only with `VERIFY_WRITES=1`.
 - **Known boundaries**: leads without a partner are excluded from partner-joined doors
   (Odoo spells "no partner" as `false`; the engine now drops such keys at the seam, and the
   producer's domain filter also skips the wasted fetch); Odoo demo data genuinely contains duplicate
