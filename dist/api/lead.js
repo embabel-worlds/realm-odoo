@@ -11,7 +11,8 @@ class OdooLead extends runtime_types_1.Entity {
     /** Schedule follow-up work on the deal, due on a date, optionally assigned to someone. */
     async scheduleFollowUp(followUp) {
         const ids = await this.gateway.odoo.leadActivitySchedule((0, odoo_1.activityArgs)((0, odoo_1.odooId)(this.id), followUp));
-        return ids[0];
+        // As on a customer: an id list when Odoo was called, a request passed back as it came.
+        return Array.isArray(ids) ? ids[0] : ids;
     }
     /**
      * Overwrite fields on the deal: stage, expected revenue, probability, close date. What was there
