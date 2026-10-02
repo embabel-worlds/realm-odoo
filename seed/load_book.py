@@ -75,18 +75,19 @@ def rows(book, name, optional=False):
 
 
 def load(odoo, book):
-    made = {"salespeople": 0, "accounts": 0, "contacts": 0, "opportunities": 0, "notes": 0, "meetings": 0}
+    made = {"salespeople": 0, "accounts": 0, "contacts": 0, "opportunities": 0, "notes": 0, "meetings": 0, "follow-ups": 0}
     accounts, contacts, deals = rows(book, "crm/accounts.csv"), rows(book, "crm/contacts.csv"), rows(book, "crm/opportunities.csv")
-    # The manual history: notes people wrote and calls they booked, apart from the one note
-    # each record is born with. Optional, because a book need not have any.
+    # The manual history: notes people wrote, calls they booked and follow-ups they scheduled,
+    # apart from the one note each record is born with. Optional, because a book need not have any.
     notes, meetings = rows(book, "crm/notes.csv", optional=True), rows(book, "crm/meetings.csv", optional=True)
+    followups = rows(book, "crm/followups.csv", optional=True)
 
     # Owners become real Odoo users so the pipeline is somebody's, and so a note can be
     # written in the voice of the person the book says wrote it. no_reset_password: a fresh
     # user otherwise triggers an invitation email to an address that does not exist.
     users = {}
     people = [r["owner"] for r in accounts + contacts + deals] + [n["author"] for n in notes] + \
-             [m["organizer"] for m in meetings]
+             [m["organizer"] for m in meetings] + [f["owner"] for f in followups]
     for name in sorted({p for p in people if p}):
         login = name.lower().replace(" ", ".") + "@vendor.example"
         uid, new = odoo.ensure("res.users", [["login", "=", login]], {"name": name, "login": login})
@@ -217,6 +218,17 @@ def load(odoo, book):
             "description": f"Booked {m['booked_on']} from the overdue-invoice list."}],
             context={"no_mail_to_attendees": True})
         made["meetings"] += 1
+
+    # Follow-ups as Odoo activities on the company, assigned to the owner who scheduled them —
+    # work somebody has picked up. Looked up by company and summary, so a reload adds only what is
+    # missing; they go with their company on --remove.
+    for f in followups:
+        pid = company[f["account_key"]]
+        if odoo.find("mail.activity", [["res_model", "=", "res.partner"], ["res_id", "=", pid], ["summary", "=", f["summary"]]]):
+            continue
+        odoo.call("res.partner", "activity_schedule", ids=[pid], act_type_xmlid="mail.mail_activity_data_todo",
+                  summary=f["summary"], note=f["note"], date_deadline=f["due_on"], user_id=users[f["owner"]][0])
+        made["follow-ups"] += 1
     return made
 
 
