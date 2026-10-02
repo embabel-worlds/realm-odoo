@@ -123,8 +123,9 @@ change in Odoo is what `apis/odoo-json2.json` declares. To change a method: edit
     it; nothing in this realm needs it.
 
   Each declares, as `x-embabel-effect` in `apis/odoo-json2.json`, what it changes, whether and how
-  it can be undone, and which arguments identify a repeat. A host uses that to decide who must
-  approve a call and to avoid making it twice; today's host does not read it yet.
+  it can be undone, and which arguments identify a repeat. The host reads it: an observing agent is
+  refused every declared write, and `calendarEventCreate` is `sensitive` (its invitations go to the
+  attendees), so an agent is asked for approval before creating an event even when it may act.
   `tests/verify-writes.sh` calls every verb through the appliance, reconciles the result against
   Odoo, and undoes it; `verify.sh` runs it only with `VERIFY_WRITES=1`.
 - **Known boundaries**: leads without a partner are excluded from partner-joined doors

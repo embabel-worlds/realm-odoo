@@ -542,7 +542,8 @@
             "vals_list.name",
             "vals_list.start",
             "vals_list.partner_ids"
-          ]
+          ],
+          "sensitive": "invitations go to its attendees"
         },
         "requestBody": {
           "required": true,
