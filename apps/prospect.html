@@ -1,20 +1,30 @@
 <!doctype html>
 <html lang="en">
 <head>
+<meta name="description" content="Pipeline and receivables per customer, over live Odoo through realm-odoo — with meeting briefings, deal triage and an AI read grounded on the rows shown.">
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Prospect — the view over the business</title>
   <script type="application/embabel-app+json">
-  {
-    "version": 1,
-    "description": "Pipeline and receivables per customer, over live Odoo through realm-odoo — with meeting briefings, deal triage and an AI read grounded on the rows shown.",
-    "dependsOn": {
-      "views": ["OdooPipelineReceivables", "OdooDealTriage", "OdooMeetingBriefing"],
-      "realms": ["odoo"],
-      "gateway": ["ai", "kg"]
-    }
+{
+  "version": 1,
+  "name": "prospect",
+  "requires": {
+    "views": [
+      "OdooPipelineReceivables",
+      "OdooDealTriage",
+      "OdooMeetingBriefing"
+    ],
+    "realms": [
+      "odoo"
+    ],
+    "namespaces": [
+      "ai",
+      "kg"
+    ]
   }
-  </script>
+}
+</script>
   <link rel="stylesheet" href="prospect.css">
   <script src="/api/v1/apps-runtime/v1/embabel.js"></script>
   <script src="/api/v1/apps-runtime/gateway.js"></script>
