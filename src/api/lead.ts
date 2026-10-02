@@ -11,7 +11,8 @@ export class OdooLead extends Entity<OdooWriteGateway> {
   /** Schedule follow-up work on the deal, due on a date, optionally assigned to someone. */
   async scheduleFollowUp(followUp: FollowUp): Promise<number> {
     const ids = await this.gateway.odoo.leadActivitySchedule(activityArgs(odooId(this.id), followUp));
-    return ids[0];
+    // As on a customer: an id list when Odoo was called, a request passed back as it came.
+    return Array.isArray(ids) ? ids[0] : ids;
   }
 
   /**

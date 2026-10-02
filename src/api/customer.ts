@@ -41,7 +41,9 @@ export class OdooCustomer extends Entity<OdooWriteGateway> {
   /** Schedule follow-up work on the customer, due on a date, optionally assigned to someone. */
   async scheduleFollowUp(followUp: FollowUp): Promise<number> {
     const ids = await this.gateway.odoo.partnerActivitySchedule(activityArgs(odooId(this.id), followUp));
-    return ids[0];
+    // A list of new ids when Odoo was called; anything else — a request a person must approve
+    // first, when the agent may only ask — is passed back as it came, never read as an id.
+    return Array.isArray(ids) ? ids[0] : ids;
   }
 
   /** Book a call with the customer in Odoo's calendar. No invitation is sent unless asked for. */
