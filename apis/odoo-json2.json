@@ -463,6 +463,7 @@
         "description": "Writes a note into the customer's history in Odoo, where the account team reads it. `subtype_xmlid: mail.mt_note` keeps it internal: it notifies no follower and never emails the customer.",
         "x-embabel-effect": {
           "writes": "an internal note in the customer's history",
+          "attribution": "body",
           "reversible": "yes: delete the note in Odoo",
           "idempotencyKey": [
             "ids",
@@ -677,6 +678,7 @@
         "description": "Creates follow-up work against a customer, due on a date, assigned to a person. Odoo's own scheduling method on the record, so no install-specific model id is needed. Without `user_id` the activity is unassigned.",
         "x-embabel-effect": {
           "writes": "a scheduled activity on a customer",
+          "attribution": "note",
           "reversible": "yes: mark it done or cancel it",
           "idempotencyKey": [
             "ids",
@@ -751,6 +753,7 @@
         "description": "Creates follow-up work against a lead or opportunity, due on a date, assigned to a person. Odoo's own scheduling method on the record, so no install-specific model id is needed. Without `user_id` the activity is unassigned.",
         "x-embabel-effect": {
           "writes": "a scheduled activity on a lead or opportunity",
+          "attribution": "note",
           "reversible": "yes: mark it done or cancel it",
           "idempotencyKey": [
             "ids",

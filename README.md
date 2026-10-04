@@ -126,6 +126,9 @@ change in Odoo is what `apis/odoo-json2.json` declares. To change a method: edit
   it can be undone, and which arguments identify a repeat. The host reads it: an observing agent is
   refused every declared write, and `calendarEventCreate` is `sensitive` (its invitations go to the
   attendees), so an agent is asked for approval before creating an event even when it may act.
+  The three that leave text people read — a note's `body`, an activity's `note` — name it as
+  `attribution`, so a note an agent writes says who wrote it: "— via Chaser, for Priya" on its
+  sponsor's account, "— Chaser (an agent)" on its own.
   `tests/verify-writes.sh` calls every verb through the appliance, reconciles the result against
   Odoo, and undoes it; `verify.sh` runs it only with `VERIFY_WRITES=1`.
 - **Known boundaries**: leads without a partner are excluded from partner-joined doors
