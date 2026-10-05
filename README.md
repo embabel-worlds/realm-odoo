@@ -66,8 +66,11 @@ its Odoo record, and ships the tests that prove the numbers.
    passes that whole file into the container, so no compose edit is needed.
 4. The server URL in `apis/odoo-json2.json` (`servers[0].url`) is the one install-specific
    fact here — point it at your Odoo as the APPLIANCE reaches it
-   (`host.docker.internal:8069` for a host-local demo). `apps/prospect.js` carries the
-   browser-reachable twin (`ODOO_BASE`) for record deep links.
+   (`host.docker.internal:8069` for a host-local demo). Odoo's BROWSER address is the
+   other, and it is written in two places: `ODOO_BASE` in `apps/prospect.js`, and the
+   `sourceUrl` compute on the five partner doors in `producers/odoo.yml`
+   (`http://localhost:8069` for the demo). A query's `sourceUrl`, and the
+   `CustomerAccount.sourceUrl` filled from it, open the record only if it is right.
 5. Install by reference from the appliance's realms mount (`install_realm_from_path`), then
    `realm_refresh` after edits.
 
