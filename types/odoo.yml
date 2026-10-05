@@ -84,9 +84,25 @@
     # What identifies the COMPANY, as opposed to `id`, which identifies Odoo's record of it and
     # is what every join in this realm keys on. The spine normalizes; this realm sends the URL
     # exactly as Odoo holds it.
+    #
+    # `canonical:` copies the value onto the account as well. Odoo is the CRM, and the
+    # vocabulary says the account is what the CRM knows of it, so the account's own website,
+    # industry, relationship, owner and link are filled from here — and only from here: an
+    # account no CRM record keys keeps them empty rather than borrow billing's guess.
     website:
       hub: CustomerAccount
       description: "Company website URL, as Odoo holds it. A domain identifies a company; a name does not. Odoo spells 'unset' as FALSE, which keys nothing."
+      metadata: { canonical: website }
+    industry_id: "Industry id."
+    industry: { description: "Industry, as Odoo names it ('Manufacturing').", metadata: { canonical: industry } }
+    user_id: "The salesperson's user id."
+    ownerName: { description: "The salesperson who owns the account, by name.", metadata: { canonical: ownerName } }
+    # Odoo's own measure: customer_rank counts the sales and invoices made out to the partner,
+    # so above zero they have bought from us. A supplier we have never sold to is neither.
+    relationship:
+      description: "customer (Odoo has sold to or invoiced them), prospect (not yet), or other (a supplier we have never sold to)."
+      metadata: { canonical: relationship }
+    sourceUrl: { description: "Opens this partner in Odoo.", metadata: { canonical: sourceUrl } }
     scopeKey: "Echo of the book scope this customer was fetched under."
   virtualJoins:
     - { anchorLabel: OdooBook, relationship: HAS_CUSTOMER, keyField: scope,

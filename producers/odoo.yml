@@ -9,6 +9,19 @@
 # database. `load: ""` is load-bearing on every one: it makes many2one fields come back as bare
 # ids, which is what the joins key on; without it partner_id arrives as an [id, name] pair and
 # every traversal silently matches nothing.
+#
+# THE PARTNER DOORS are the exception, and keep the rule another way. A partner is what the
+# business vocabulary's CustomerAccount is filled from, and the account wants NAMES Odoo only
+# sends inside a many2one pair: the industry ("Manufacturing") and the salesperson ("Mike
+# Davis"). JSON-2's search_read cannot read a related field by path, and `load: ""` throws the
+# name away. So these five doors fetch the pairs, and their `compute:` puts every many2one back
+# to its bare id (`r.x[0]`) — the shape the rest of the realm keys on — while lifting the name
+# (`r.x[1]`) into a property of its own. Every expression reads the record as fetched, so
+# `industry` sees the pair even though `industry_id` is computed to an id beside it.
+#
+# `sourceUrl` is built from the id against Odoo's BROWSER address, which is not the API's: the
+# appliance reaches Odoo at the spec's server URL, a person reaches it at this one. It is an
+# install-specific fact, the twin of `ODOO_BASE` in apps/prospect.js — see the README.
 
 # Open pipeline by stage NAME — the scan door. The anchor key (a stage name, e.g.
 # 'Proposition') is injected into the domain's IN list; echoed back so records join to the
@@ -53,8 +66,8 @@
       - ["id", "in", []]
     # website rides along for the Diffbot bridge (types/diffbot.yml): a domain
     # identifies a company and a name does not, and website is Odoo's own field.
-    fields: [name, email, phone, city, country_id, is_company, website]
-    load: ""
+    fields: [name, email, phone, city, country_id, is_company, website, industry_id, user_id, customer_rank, supplier_rank]
+    # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
     # NO paging, and that is safe HERE for a reason worth writing down: this is a
     # lookup BY ID, so a chunk of `maxKeysPerCall` (50) keys returns at most 50
     # records — never near this limit. The sibling by-partner producers batch the
@@ -66,8 +79,14 @@
     email: "CASE r.email WHEN false THEN null ELSE r.email END"
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
     city: "CASE r.city WHEN false THEN null ELSE r.city END"
-    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
     website: "CASE r.website WHEN false THEN null ELSE r.website END"
+    industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
+    industry: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
+    sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
   cache: { kind: ttl, seconds: 300 }
 
 # A customer's UNPAID posted customer invoices. Keyed on partner_id; the not_paid/partial
@@ -134,15 +153,21 @@
     domain:
       - ["customer_rank", ">", 0]
     # website rides along for the Diffbot bridge — see customersById.
-    fields: [name, email, phone, city, country_id, is_company, website]
-    load: ""
+    fields: [name, email, phone, city, country_id, is_company, website, industry_id, user_id, customer_rank, supplier_rank]
+    # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
     limit: 200
   compute:
     email: "CASE r.email WHEN false THEN null ELSE r.email END"
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
     city: "CASE r.city WHEN false THEN null ELSE r.city END"
-    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
     website: "CASE r.website WHEN false THEN null ELSE r.website END"
+    industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
+    industry: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
+    sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
   # WHAT THE SOURCE ABSORBS DECIDES WHAT THE QUESTION COSTS. An Odoo domain is a list of
   # triples ANDed together, so `domain.-` appends one conjunct and no `linkPrevious` is needed.
   #
@@ -413,15 +438,21 @@
   args:
     domain:
       - ["is_company", "=", true]
-    fields: [name, email, phone, city, country_id, is_company, website]
-    load: ""
+    fields: [name, email, phone, city, country_id, is_company, website, industry_id, user_id, customer_rank, supplier_rank]
+    # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
     limit: 500
   compute:
     email: "CASE r.email WHEN false THEN null ELSE r.email END"
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
     city: "CASE r.city WHEN false THEN null ELSE r.city END"
-    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
     website: "CASE r.website WHEN false THEN null ELSE r.website END"
+    industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
+    industry: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
+    sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
   # Same door, same fields as customersAll — so the same rules, for the same reasons.
   pushdown:
     - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
@@ -463,15 +494,21 @@
       - ["website", "ilike", "{keys}"]
       # Companies only: a contact inherits nothing here, but one may carry the same website.
       - ["is_company", "=", true]
-    fields: [name, email, phone, city, country_id, is_company, website]
-    load: ""
+    fields: [name, email, phone, city, country_id, is_company, website, industry_id, user_id, customer_rank, supplier_rank]
+    # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
     limit: 20
   compute:
     email: "CASE r.email WHEN false THEN null ELSE r.email END"
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
     city: "CASE r.city WHEN false THEN null ELSE r.city END"
-    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
     website: "CASE r.website WHEN false THEN null ELSE r.website END"
+    industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
+    industry: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
+    sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
   # An account billing knows and the CRM does not is asked about on every query otherwise.
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
@@ -597,16 +634,22 @@
   args:
     # No domain at all: the whole partner table, companies and people together.
     domain: []
-    fields: [name, email, phone, city, country_id, is_company, website, parent_id]
-    load: ""
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
+    # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
     limit: 500
   compute:
     email: "CASE r.email WHEN false THEN null ELSE r.email END"
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
     city: "CASE r.city WHEN false THEN null ELSE r.city END"
-    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
     website: "CASE r.website WHEN false THEN null ELSE r.website END"
-    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id END"
+    industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
+    industry: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
+    sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
+    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
   pushdown:
     - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
     - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
