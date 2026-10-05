@@ -1,3 +1,10 @@
+# Odoo spells "not set" as FALSE for every kind of field — text, selection, date, many2one —
+# and only a real boolean means it. Passed through, a subject of `false` fails `IS NULL`, wins a
+# `coalesce`, and puts a boolean in a string column. So each producer's `compute:` turns `false`
+# in any field that is not a boolean into null, the one spelling Cypher reads as "no
+# value". Comparing a string or a number with `false` is simply not equal in Cypher, so a real
+# value passes through untouched. Numbers are not listed; Odoo sends 0 for those, which is a value.
+
 # All four producers speak to Odoo's MIDDLE TIER — search_read through JSON-2 — never the
 # database. `load: ""` is load-bearing on every one: it makes many2one fields come back as bare
 # ids, which is what the joins key on; without it partner_id arrives as an [id, name] pair and
@@ -24,6 +31,12 @@
     fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed]
     load: ""
     limit: 200
+  compute:
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
+    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id END"
+    create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
+    date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
   cache: { kind: ttl, seconds: 300 }
 
 # Customers by id — resolves a lead's partner_id (bare id, thanks to load:"") to the partner
@@ -49,6 +62,12 @@
     # starves the rest of the chunk, so those page. An audit that flags a batched
     # producer with a flat limit is right to; this is the exception, not an oversight.
     limit: 200
+  compute:
+    email: "CASE r.email WHEN false THEN null ELSE r.email END"
+    phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
+    city: "CASE r.city WHEN false THEN null ELSE r.city END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id END"
+    website: "CASE r.website WHEN false THEN null ELSE r.website END"
   cache: { kind: ttl, seconds: 300 }
 
 # A customer's UNPAID posted customer invoices. Keyed on partner_id; the not_paid/partial
@@ -72,6 +91,10 @@
     fields: [name, partner_id, amount_total, amount_residual, invoice_date_due, payment_state]
     load: ""
     limit: 200
+  compute:
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    invoice_date_due: "CASE r.invoice_date_due WHEN false THEN null ELSE r.invoice_date_due END"
+    payment_state: "CASE r.payment_state WHEN false THEN null ELSE r.payment_state END"
   cache: { kind: ttl, seconds: 300 }
 
 # A customer's sales orders, any state — the state field rides on the record so a query can
@@ -90,6 +113,10 @@
     fields: [name, partner_id, amount_total, state, date_order]
     load: ""
     limit: 200
+  compute:
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    state: "CASE r.state WHEN false THEN null ELSE r.state END"
+    date_order: "CASE r.date_order WHEN false THEN null ELSE r.date_order END"
   cache: { kind: ttl, seconds: 300 }
 
 # ── The book doors: fetch-all producers behind the OdooBook anchor, so questions about
@@ -107,9 +134,15 @@
     domain:
       - ["customer_rank", ">", 0]
     # website rides along for the Diffbot bridge — see customersById.
-    fields: [name, email, phone, city, is_company, website]
+    fields: [name, email, phone, city, country_id, is_company, website]
     load: ""
     limit: 200
+  compute:
+    email: "CASE r.email WHEN false THEN null ELSE r.email END"
+    phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
+    city: "CASE r.city WHEN false THEN null ELSE r.city END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id END"
+    website: "CASE r.website WHEN false THEN null ELSE r.website END"
   # WHAT THE SOURCE ABSORBS DECIDES WHAT THE QUESTION COSTS. An Odoo domain is a list of
   # triples ANDed together, so `domain.-` appends one conjunct and no `linkPrevious` is needed.
   #
@@ -161,6 +194,10 @@
     fields: [name, partner_id, amount_total, amount_residual, invoice_date_due, payment_state]
     load: ""
     limit: 200
+  compute:
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    invoice_date_due: "CASE r.invoice_date_due WHEN false THEN null ELSE r.invoice_date_due END"
+    payment_state: "CASE r.payment_state WHEN false THEN null ELSE r.payment_state END"
   # See customersAll. The money and due-date filters are the ones the receivables views actually
   # write, and they were the ones most expensive to leave graph-side: "everything owing over X"
   # read every unpaid invoice in the book to drop most of them afterwards.
@@ -204,6 +241,11 @@
     fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date]
     load: ""
     limit: 200
+  compute:
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
+    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id END"
+    create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
   # See customersAll for why these are declared. `load: ""` means the many2one fields come back
   # as bare ids, so `stage_id` and `partner_id` compare against NUMBERS here, not stage names —
   # which is exactly what the typed `{value}` slot makes expressible.
@@ -265,6 +307,15 @@
     fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active]
     load: ""
     limit: 1000
+  compute:
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
+    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id END"
+    create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
+    date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
+    won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
+    date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id END"
   # 1,000 a page: the book's 2,000 leads are three round trips, not eleven. It does NOT make the
   # sweep faster — measured 2026-09-23 it is ~10 s either way, because Odoo's search_read cost is
   # per record (the fields list, partner_id resolution), not per call. Fewer calls is all it buys.
@@ -302,6 +353,12 @@
     fields: [res_id, body, date, author_id, subject, message_type]
     load: ""
     limit: 200
+  compute:
+    body: "CASE r.body WHEN false THEN null ELSE r.body END"
+    date: "CASE r.date WHEN false THEN null ELSE r.date END"
+    author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id END"
+    subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
+    message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
 
 # ── The preparation surface: meetings and scheduled next-actions, behind the book door
 # like every other set. This is data Odoo shows one record at a time; the point of having
@@ -320,6 +377,11 @@
     fields: [name, start, stop, location, description, partner_ids]
     load: ""
     limit: 200
+  compute:
+    start: "CASE r.start WHEN false THEN null ELSE r.start END"
+    stop: "CASE r.stop WHEN false THEN null ELSE r.stop END"
+    location: "CASE r.location WHEN false THEN null ELSE r.location END"
+    description: "CASE r.description WHEN false THEN null ELSE r.description END"
   cache: { kind: ttl, seconds: 300 }
 
 - name: activitiesAll
@@ -333,6 +395,12 @@
     fields: [res_model, res_id, res_name, summary, date_deadline, user_id]
     load: ""
     limit: 500
+  compute:
+    res_model: "CASE r.res_model WHEN false THEN null ELSE r.res_model END"
+    res_name: "CASE r.res_name WHEN false THEN null ELSE r.res_name END"
+    summary: "CASE r.summary WHEN false THEN null ELSE r.summary END"
+    date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id END"
   cache: { kind: ttl, seconds: 300 }
 
 # Every company in the CRM, bought or not. The same record shape as customersAll.
@@ -345,9 +413,15 @@
   args:
     domain:
       - ["is_company", "=", true]
-    fields: [name, email, phone, city, is_company, website]
+    fields: [name, email, phone, city, country_id, is_company, website]
     load: ""
     limit: 500
+  compute:
+    email: "CASE r.email WHEN false THEN null ELSE r.email END"
+    phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
+    city: "CASE r.city WHEN false THEN null ELSE r.city END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id END"
+    website: "CASE r.website WHEN false THEN null ELSE r.website END"
   # Same door, same fields as customersAll — so the same rules, for the same reasons.
   pushdown:
     - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
@@ -392,6 +466,12 @@
     fields: [name, email, phone, city, country_id, is_company, website]
     load: ""
     limit: 20
+  compute:
+    email: "CASE r.email WHEN false THEN null ELSE r.email END"
+    phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
+    city: "CASE r.city WHEN false THEN null ELSE r.city END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id END"
+    website: "CASE r.website WHEN false THEN null ELSE r.website END"
   # An account billing knows and the CRM does not is asked about on every query otherwise.
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
@@ -413,6 +493,15 @@
     fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active]
     load: ""
     limit: 200
+  compute:
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
+    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id END"
+    create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
+    date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
+    won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
+    date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id END"
   # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
   # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
   # the partners after it come back with nothing — the starvation `batchSafe: false` exists
@@ -433,6 +522,11 @@
     fields: [name, email, function, phone, parent_id]
     load: ""
     limit: 200
+  compute:
+    email: "CASE r.email WHEN false THEN null ELSE r.email END"
+    function: "CASE r.function WHEN false THEN null ELSE r.function END"
+    phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
+    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id END"
   # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
   # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
   # the partners after it come back with nothing — the starvation `batchSafe: false` exists
@@ -457,6 +551,12 @@
     fields: [res_id, body, date, author_id, subject, message_type]
     load: ""
     limit: 200
+  compute:
+    body: "CASE r.body WHEN false THEN null ELSE r.body END"
+    date: "CASE r.date WHEN false THEN null ELSE r.date END"
+    author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id END"
+    subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
+    message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
   # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
   # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
   # the partners after it come back with nothing — the starvation `batchSafe: false` exists
@@ -497,9 +597,16 @@
   args:
     # No domain at all: the whole partner table, companies and people together.
     domain: []
-    fields: [name, email, phone, city, is_company, website, parent_id]
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id]
     load: ""
     limit: 500
+  compute:
+    email: "CASE r.email WHEN false THEN null ELSE r.email END"
+    phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
+    city: "CASE r.city WHEN false THEN null ELSE r.city END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id END"
+    website: "CASE r.website WHEN false THEN null ELSE r.website END"
+    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id END"
   pushdown:
     - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
     - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
@@ -525,6 +632,13 @@
     fields: [model, res_id, body, date, author_id, subject, message_type]
     load: ""
     limit: 500
+  compute:
+    model: "CASE r.model WHEN false THEN null ELSE r.model END"
+    body: "CASE r.body WHEN false THEN null ELSE r.body END"
+    date: "CASE r.date WHEN false THEN null ELSE r.date END"
+    author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id END"
+    subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
+    message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
   pushdown:
     - { property: model, op: EQUALS, argPath: "domain.-", clause: ["model", "=", "{value}"] }
     - { property: model, op: IN, argPath: "domain.-", clause: ["model", "in", "{values}"] }
