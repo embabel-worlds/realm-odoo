@@ -7,3 +7,11 @@ tags:
   - integrations
   - erp
   - crm
+# Labels the views read but do not need. OdooMeetingBriefing and OdooDealTriage read Diffbot
+# firmographics and news through OPTIONAL MATCH: DiffbotOrganization is realm-diffbot's and
+# NewsItem realm-research's, both joined in by realm-odoo-enrichment. Without them those columns
+# are empty and the views still answer, so the host reports a note ("lights up when installed")
+# rather than a degraded realm.
+optionalLabels:
+  - DiffbotOrganization
+  - NewsItem
