@@ -15,7 +15,7 @@
     ultimately owns them, recent news — and a composed 4-6 sentence briefing. Answers "prep
     me for my meeting with X", "brief me on my upcoming meetings", "what do I need to know
     before my meetings". The customer parameter narrows to one counterparty by name.
-  outputLabel: Meeting briefing
+  outputLabel: MeetingBriefing
   params:
     customer:
       type: string
@@ -70,7 +70,7 @@
     "which deals are at risk", "how do our opportunities feel", "triage the pipeline",
     "understand our recent interactions", "which opportunities need attention". Sentiment is
     null for a deal nobody has written on: silence is not neutral, it is unknown.
-  outputLabel: Deal triage
+  outputLabel: DealTriage
   params:
     triage:
       type: string
