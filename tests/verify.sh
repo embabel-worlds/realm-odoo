@@ -5,10 +5,14 @@
 #   ODOO=http://127.0.0.1:8069 ODOO_KEY=... APPLIANCE=http://127.0.0.1:4342 AUTH=user:pass \
 #     sh tests/verify.sh
 set -e
+# Either AUTH=user:pass or TOKEN=<appliance API key>. Both go to curl through a config file, so
+# neither appears on a command line where `ps` would show it.
+AUTHCFG=$(mktemp); trap 'rm -f "$AUTHCFG"' EXIT
+if [ -n "${TOKEN:-}" ]; then printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$AUTHCFG"
+else printf 'user = "%s"\n' "${AUTH:?set AUTH (user:pass) or TOKEN}" > "$AUTHCFG"; fi
 ODOO="${ODOO:-http://127.0.0.1:8069}"
 APPLIANCE="${APPLIANCE:-http://127.0.0.1:4342}"
-: "${ODOO_KEY:?set ODOO_KEY}"; : "${AUTH:?set AUTH (user:pass)}"
-
+: "${ODOO_KEY:?set ODOO_KEY}"; 
 fail=0
 check() { # name expected actual
   if [ "$2" = "$3" ]; then echo "  ok   $1 = $2"
@@ -30,12 +34,12 @@ pid,amt=max(t.items(), key=lambda kv: kv[1]); print(f'{pid}:{amt:.2f}')")
 echo "  customers=$CUSTOMERS  top-debtor(partner:total)=$TOP_OWED"
 
 echo "== L1: traversal reconciles =="
-KG=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
+KG=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
   -d '{"cypher":"MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer) RETURN count(DISTINCT c) AS n"}')
 check "kg customer count" "$CUSTOMERS" "$(echo "$KG" | py 'import json,sys;print(json.load(sys.stdin)["rows"][0]["n"])')"
 
 echo "== L2: the view, id-deduped, reconciles to the cent =="
-VIEW=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooPipelineReceivables/invoke" \
+VIEW=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooPipelineReceivables/invoke" \
   -H 'Content-Type: application/json' -d '{"args":{"stage":"Proposition"}}')
 VIEW_TOP=$(echo "$VIEW" | py "
 import json,sys
@@ -53,7 +57,7 @@ EXP_AMT=${TOP_OWED#*:}
 # Money questions run 3x: generation is stochastic; a view-routed answer is stable, and any
 # drift on any run is a failure.
 for Q in "How many customers do we have" "Which customers owe us most money" "Which customers owe us most money" "Which customers owe us most money" "which is our most valuable customer"; do
-  A=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/admin/kg/ask" -H 'Content-Type: application/json' \
+  A=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/ask" -H 'Content-Type: application/json' \
     -d "{\"question\":\"$Q\"}")
   GOT=$(echo "$A" | py "
 import json,sys
@@ -70,19 +74,19 @@ done
 
 echo "== L5: the app's own calls =="
 for a in prospect prospect.css prospect.js; do
-  code=$(curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" "$APPLIANCE/api/v1/apps/$a")
+  code=$(curl -s -o /dev/null -w '%{http_code}' -K "$AUTHCFG" "$APPLIANCE/api/v1/apps/$a")
   check "app asset $a" "200" "$code"
 done
 
 echo "== L3b: the battery (tests/questions.yml) =="
 DIR="$(dirname "$0")"
-python3 - "$DIR/questions.yml" "$APPLIANCE" "$AUTH" <<'PYEOF' || fail=1
+python3 - "$DIR/questions.yml" "$APPLIANCE" "$AUTHCFG" <<'PYEOF' || fail=1
 import json, sys, subprocess, yaml
 
 qfile, base, auth = sys.argv[1], sys.argv[2], sys.argv[3]
 battery = yaml.safe_load(open(qfile))
 def curl(path, body):
-    out = subprocess.run(["curl", "-s", "-u", auth, "-X", "POST", base + path,
+    out = subprocess.run(["curl", "-s", "-K", auth, "-X", "POST", base + path,
                           "-H", "Content-Type: application/json", "-d", json.dumps(body)],
                          capture_output=True, text=True).stdout
     return json.loads(out, strict=False)
@@ -133,7 +137,7 @@ else
   # The payload travels by ENVIRONMENT, not by pipe: `echo | python3 - <<EOF` hands the
   # heredoc to stdin as the program, so the piped JSON silently never arrives — this leg's
   # first real run (the token gates it) found it reading EOF.
-  FVIEW=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooCustomerFirmographics/invoke" \
+  FVIEW=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooCustomerFirmographics/invoke" \
     -H 'Content-Type: application/json' -d '{"args":{}}')
   FVIEW="$FVIEW" DIFFBOT_TOKEN="$DIFFBOT_TOKEN" python3 - <<'PYEOF' || fail=1
 import json, os, sys, urllib.request, urllib.parse
@@ -167,11 +171,11 @@ echo "== L7: the AI layer judges what the seed planted =="
 # the query's, so they now reconcile like any view's: top revenue must equal the pipeline
 # view's, and a null sentiment (a deal nobody wrote on) must arrive as null, never a
 # sentinel sentence in a label column.
-TRIAGE=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooDealTriage/invoke" \
+TRIAGE=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooDealTriage/invoke" \
   -H 'Content-Type: application/json' -d '{"args":{"triage":""}}')
-ATRISK=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooDealTriage/invoke" \
+ATRISK=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooDealTriage/invoke" \
   -H 'Content-Type: application/json' -d '{"args":{"triage":"at_risk"}}')
-PIPE=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooOpenPipeline/invoke" \
+PIPE=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooOpenPipeline/invoke" \
   -H 'Content-Type: application/json' -d '{"args":{}}')
 TRIAGE="$TRIAGE" ATRISK="$ATRISK" PIPE="$PIPE" python3 - <<'PYEOF' || fail=1
 import json, os, sys
@@ -208,9 +212,9 @@ echo "== L8: meeting briefings (virtual cypher + synthesize) — figures reconci
 # The briefing's PROSE is a model's composition and is asserted present, never parsed. The
 # FIGURES travel beside it as columns and reconcile exactly against the receivables view —
 # a briefing that narrates one number while its row carries another is drift, whoever wrote it.
-PREP=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooMeetingBriefing/invoke" \
+PREP=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooMeetingBriefing/invoke" \
   -H 'Content-Type: application/json' -d '{"args":{}}')
-RECV=$(curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/OdooReceivablesByCustomer/invoke" \
+RECV=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooReceivablesByCustomer/invoke" \
   -H 'Content-Type: application/json' -d '{"args":{}}')
 PREP="$PREP" RECV="$RECV" python3 - <<'PYEOF' || fail=1
 import json, os, sys

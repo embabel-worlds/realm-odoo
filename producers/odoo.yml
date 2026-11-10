@@ -41,7 +41,7 @@
       # IN-list — a 500. Until the engine drops falsy join keys, this door carries
       # only partnered leads; the trade is stated here rather than discovered.
       - ["partner_id", "!=", false]
-    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed]
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline]
     load: ""
     limit: 200
   compute:
@@ -50,6 +50,13 @@
     stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
+    # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
+    # says `pending` for open), amount is the deal value, closeOn the expected close while open
+    # and the day it was decided once won or lost. Odoo's own fields stay beside them.
+    title: "r.name"
+    status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
+    amount: "toFloat(r.expected_revenue)"
+    closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
   cache: { kind: ttl, seconds: 300 }
 
 # Customers by id — resolves a lead's partner_id (bare id, thanks to load:"") to the partner
@@ -263,7 +270,7 @@
       # Partnerless leads excluded here for the same falsy-key reason as leadsByStage:
       # their partner_id is FALSE, and false inside a downstream integer batch breaks it.
       - ["partner_id", "!=", false]
-    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date]
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, won_status, date_deadline, date_closed]
     load: ""
     limit: 200
   compute:
@@ -271,6 +278,13 @@
     email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
     stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
+    # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
+    # says `pending` for open), amount is the deal value, closeOn the expected close while open
+    # and the day it was decided once won or lost. Odoo's own fields stay beside them.
+    title: "r.name"
+    status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
+    amount: "toFloat(r.expected_revenue)"
+    closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
   # See customersAll for why these are declared. `load: ""` means the many2one fields come back
   # as bare ids, so `stage_id` and `partner_id` compare against NUMBERS here, not stage names —
   # which is exactly what the typed `{value}` slot makes expressible.
@@ -341,6 +355,13 @@
     won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id END"
+    # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
+    # says `pending` for open), amount is the deal value, closeOn the expected close while open
+    # and the day it was decided once won or lost. Odoo's own fields stay beside them.
+    title: "r.name"
+    status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
+    amount: "toFloat(r.expected_revenue)"
+    closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
   # 1,000 a page: the book's 2,000 leads are three round trips, not eleven. It does NOT make the
   # sweep faster — measured 2026-09-23 it is ~10 s either way, because Odoo's search_read cost is
   # per record (the fields list, partner_id resolution), not per call. Fewer calls is all it buys.
@@ -384,6 +405,8 @@
     author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id END"
     subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
     message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
+    # The vocabulary's AccountNote.writtenOn: the day, from Odoo's UTC timestamp.
+    writtenOn: "CASE r.date WHEN false THEN null ELSE substring(r.date, 0, 10) END"
 
 # ── The preparation surface: meetings and scheduled next-actions, behind the book door
 # like every other set. This is data Odoo shows one record at a time; the point of having
@@ -407,6 +430,9 @@
     stop: "CASE r.stop WHEN false THEN null ELSE r.stop END"
     location: "CASE r.location WHEN false THEN null ELSE r.location END"
     description: "CASE r.description WHEN false THEN null ELSE r.description END"
+    # The vocabulary's Meeting.
+    title: "r.name"
+    startsOn: "CASE r.start WHEN false THEN null ELSE substring(r.start, 0, 10) END"
   cache: { kind: ttl, seconds: 300 }
 
 - name: activitiesAll
@@ -426,6 +452,10 @@
     summary: "CASE r.summary WHEN false THEN null ELSE r.summary END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id END"
+    # The vocabulary's FollowUp, and the key FOLLOW_UP_ON joins on (see OdooActivity).
+    title: "CASE r.summary WHEN false THEN r.res_name ELSE r.summary END"
+    dueOn: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
+    partnerId: "CASE r.res_model WHEN 'res.partner' THEN r.res_id ELSE null END"
   cache: { kind: ttl, seconds: 300 }
 
 # Every company in the CRM, bought or not. The same record shape as customersAll.
@@ -539,6 +569,13 @@
     won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id END"
+    # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
+    # says `pending` for open), amount is the deal value, closeOn the expected close while open
+    # and the day it was decided once won or lost. Odoo's own fields stay beside them.
+    title: "r.name"
+    status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
+    amount: "toFloat(r.expected_revenue)"
+    closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
   # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
   # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
   # the partners after it come back with nothing — the starvation `batchSafe: false` exists
@@ -594,6 +631,8 @@
     author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id END"
     subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
     message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
+    # The vocabulary's AccountNote.writtenOn: the day, from Odoo's UTC timestamp.
+    writtenOn: "CASE r.date WHEN false THEN null ELSE substring(r.date, 0, 10) END"
   # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
   # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
   # the partners after it come back with nothing — the starvation `batchSafe: false` exists
@@ -682,6 +721,8 @@
     author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id END"
     subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
     message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
+    # The vocabulary's AccountNote.writtenOn: the day, from Odoo's UTC timestamp.
+    writtenOn: "CASE r.date WHEN false THEN null ELSE substring(r.date, 0, 10) END"
   pushdown:
     - { property: model, op: EQUALS, argPath: "domain.-", clause: ["model", "=", "{value}"] }
     - { property: model, op: IN, argPath: "domain.-", clause: ["model", "in", "{values}"] }

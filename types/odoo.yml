@@ -50,8 +50,10 @@
     # counts what was WON or LOST cannot be answered through it, and had to fan out one
     # call per account instead. Named apart from HAS_OPEN_LEAD rather than replacing it:
     # "the pipeline" and "every deal ever" are different questions and both get asked.
+    # implicitDoor: a bare `MATCH (o:Opportunity)` takes THIS door — every deal, as the vocabulary
+    # means it ("open or decided"); the pipeline is `WHERE o.status = 'open'`.
     - { anchorLabel: OdooBook, relationship: HAS_ANY_LEAD, keyField: scope,
-        recordKeyField: scopeKey, producer: leadsAll,
+        recordKeyField: scopeKey, producer: leadsAll, implicitDoor: true,
         description: "Every opportunity on the book — open, won and lost. Read won_status to tell them apart." }
     - { anchorLabel: OdooStagePipeline, relationship: HAS_LEAD, keyField: stage,
         recordKeyField: stageKey, producer: leadsByStage,
@@ -111,8 +113,11 @@
     # Prospects too. HAS_CUSTOMER is who has BOUGHT; an account-level question is as often about
     # a company sales is still courting, and it has to be an account before anything can be
     # said about it.
+    # implicitDoor: a bare `MATCH (k:CrmAccount)` takes THIS door. Odoo has three book doors onto
+    # partners, and the engine will not choose between them; the vocabulary's CrmAccount is "a
+    # company as the CRM knows it", prospects included, which is this one.
     - { anchorLabel: OdooBook, relationship: HAS_COMPANY, keyField: scope,
-        recordKeyField: scopeKey, producer: companiesAll,
+        recordKeyField: scopeKey, producer: companiesAll, implicitDoor: true,
         description: "Every company the CRM knows — customers and prospects alike." }
     # BOTH SIDES. HAS_CUSTOMER and HAS_COMPANY each reach companies only; this reaches the
     # PEOPLE too, which is what a question about notes needs — most chatter is written on a
@@ -128,13 +133,22 @@
         description: "The partners attending this meeting." }
     - { anchorLabel: OdooLead, relationship: LEAD_OF, keyField: partner_id, recordKeyField: id,
         producer: customersById, description: "The customer an opportunity belongs to." }
+    # The vocabulary's FollowUp edge. Keyed on `partnerId`, which is the activity's res_id ONLY when
+    # it hangs on a partner: res_id alone is an id in whatever model res_model names, and keyed on
+    # it a follow-up on deal 12242 would be read as one on partner 12242.
+    - { anchorLabel: OdooActivity, relationship: FOLLOW_UP_ON, keyField: partnerId, recordKeyField: id,
+        producer: customersById, description: "The company or person a scheduled activity is about." }
     # The vocabulary's own edge, from the vocabulary's own anchor. Odoo is asked for the
     # account's domain with `website ilike`, a SUBSTRING match, and recordKeyField is `website`
     # and NOT an echo of the asked key: read through the spine, `https://www.stark.com` is
     # stark.com and `https://notstark.com` is not, so a stray is left unlinked.
-    # ridesHub: when a query has already swept the book (`(:OdooBook {scope:'all'})-[:HAS_CUSTOMER]->`),
-    # this edge is answered from those customers by the account's domain — the spine's own key —
-    # instead of one fetch per account, which is refused above 200 accounts (embabel/me#1489).
+    # ridesHub: when a query has already swept the book's COMPANIES — `MATCH (k:CrmAccount)`, which
+    # takes the HAS_COMPANY door — this edge is answered from those companies by the account's domain,
+    # the spine's own key, instead of one fetch per account, which is refused above 200 accounts
+    # (embabel/me#1489). The ride trusts the sweep to be complete, and only HAS_COMPANY is: this edge
+    # reaches prospects too (is_company, any customer_rank), and a query that swept HAS_CUSTOMER instead
+    # rides only the companies that have bought — a prospect billing knows then reads as "unknown to
+    # the CRM". realm-account-health's billed-but-unknown rule said six where Odoo holds three.
     - { anchorLabel: CustomerAccount, relationship: TRACKED_AS, keyField: accountKey,
         recordKeyField: website, producer: customersByWebsite, ridesHub: true,
         description: "Odoo's record of a customer account, matched on the company's website." }
@@ -249,8 +263,10 @@
     - { anchorLabel: OdooBook, relationship: HAS_MESSAGE, keyField: scope,
         recordKeyField: scopeKey, producer: messagesAll,
         description: "Every note and email in the book's chatter, on companies, contacts and deals alike — the door for notes questions asked across accounts rather than about one." }
+    # implicitDoor: a bare `MATCH (n:AccountNote)` takes this door. HAS_MESSAGE is the same sweep,
+    # and two doors onto one population would otherwise leave the engine refusing to pick.
     - { anchorLabel: OdooBook, relationship: HAS_NOTE, keyField: scope,
-        recordKeyField: scopeKey, producer: messagesAll,
+        recordKeyField: scopeKey, producer: messagesAll, implicitDoor: true,
         description: "The same sweep, by the business vocabulary's name for it." }
     - { anchorLabel: OdooLead, relationship: HAS_MESSAGE, keyField: id, recordKeyField: leadKey,
         producer: messagesByLead,
@@ -269,6 +285,8 @@
 # from them to everything else the book knows — debt, deals, chatter, firmographics, news.
 - name: OdooMeeting
   userAnchor: false
+  # A Meeting of the business vocabulary; MEETING_WITH (declared on OdooCustomer) is its edge.
+  parents: [Meeting]
   description: |
     A meeting from the Odoo calendar, with its attendee partner ids. Times are UTC as Odoo
     stores them.
@@ -291,6 +309,8 @@
 # res_id say what it hangs on; deadlines make "what needs doing" a date filter, not a guess.
 - name: OdooActivity
   userAnchor: false
+  # A FollowUp of the business vocabulary; FOLLOW_UP_ON (declared on OdooCustomer) is its edge.
+  parents: [FollowUp]
   description: |
     A scheduled activity — call, to-do, email — with its deadline and the record it belongs
     to (res_model/res_id, e.g. a crm.lead id).
@@ -301,6 +321,7 @@
     summary: "What the activity is, when the author wrote one."
     res_model: "Model of the record it hangs on (crm.lead, res.partner, ...)."
     res_id: "Id of that record."
+    partnerId: "res_id when the activity hangs on a partner (res.partner); empty on a deal or anything else."
     res_name: "Display name of that record."
     date_deadline: "Due date."
   virtualJoins:
