@@ -209,7 +209,7 @@
   # skips records already read. Without this the door made one call and returned `limit`
   # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
   # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 10 }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 250 }
   cache: { kind: ttl, seconds: 300 }
 
 - name: invoicesUnpaidAll
@@ -254,7 +254,7 @@
   # skips records already read. Without this the door made one call and returned `limit`
   # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
   # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 10 }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 250 }
   cache: { kind: ttl, seconds: 300 }
 
 - name: leadsOpenAll
@@ -314,7 +314,7 @@
   # skips records already read. Without this the door made one call and returned `limit`
   # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
   # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 10 }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 250 }
   cache: { kind: ttl, seconds: 300 }
 
 # A lead's chatter — the emails and comments on the opportunity, which is where the actual
@@ -365,7 +365,7 @@
   # 1,000 a page: the book's 2,000 leads are three round trips, not eleven. It does NOT make the
   # sweep faster — measured 2026-09-23 it is ~10 s either way, because Odoo's search_read cost is
   # per record (the fields list, partner_id resolution), not per call. Fewer calls is all it buys.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 5 }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
   # See customersAll for why these are declared: the source filters, and an absorbed
   # predicate is what lets a count be pushed instead of the records walked.
   pushdown:
@@ -433,6 +433,9 @@
     # The vocabulary's Meeting.
     title: "r.name"
     startsOn: "CASE r.start WHEN false THEN null ELSE substring(r.start, 0, 10) END"
+  # Paged like every other book door: unpaged, one call returned `limit` rows and a calendar
+  # longer than that read as a calendar that small.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 250 }
   cache: { kind: ttl, seconds: 300 }
 
 - name: activitiesAll
@@ -456,6 +459,8 @@
     title: "CASE r.summary WHEN false THEN r.res_name ELSE r.summary END"
     dueOn: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     partnerId: "CASE r.res_model WHEN 'res.partner' THEN r.res_id ELSE null END"
+  # Paged for the same reason as meetingsAll.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 100 }
   cache: { kind: ttl, seconds: 300 }
 
 # Every company in the CRM, bought or not. The same record shape as customersAll.
@@ -502,7 +507,7 @@
   # skips records already read. Without this the door made one call and returned `limit`
   # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
   # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 20 }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 100 }
   cache: { kind: ttl, seconds: 300 }
 
 # ── Back from the ACCOUNT. The business vocabulary's CustomerAccount is a spine several systems
@@ -696,7 +701,7 @@
     - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
     - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"] }
     - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
-  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 40 }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 100 }
   cache: { kind: ttl, seconds: 300 }
 
 - name: messagesAll
@@ -729,5 +734,5 @@
     - { property: res_id, op: EQUALS, argPath: "domain.-", clause: ["res_id", "=", "{value}"] }
     - { property: res_id, op: IN, argPath: "domain.-", clause: ["res_id", "in", "{values}"] }
     - { property: message_type, op: EQUALS, argPath: "domain.-", clause: ["message_type", "=", "{value}"] }
-  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 40 }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 100 }
   cache: { kind: ttl, seconds: 300 }
