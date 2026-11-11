@@ -248,7 +248,8 @@
     message_type: "comment (internal note / log) or email."
     res_id: "The id of the record it was written on."
     author_id: "The author's partner id."
-    leadKey: "Echo of the lead this message was fetched under."
+    leadKey: "The deal this message is on: the lead it was fetched under, or its res_id when the book sweep read a crm.lead message."
+    partnerKey: "The company or contact this message is on: its res_id when it is a res.partner message."
     # WHICH KIND of record `res_id` points at — `res.partner` (a company or a contact) or
     # `crm.lead` (a deal). Only the book sweep carries it: the per-anchor doors already know,
     # because each pins one `model` in its own domain. A book-wide reader does not, and without
@@ -256,8 +257,9 @@
     model: "The Odoo model `res_id` refers to: 'res.partner' or 'crm.lead'."
     scopeKey: "Echo of the book scope this message was fetched under."
   virtualJoins:
-    # THE BOOK'S WHOLE CHATTER, one sweep. The three anchored joins below are right for one
-    # account and refuse across the book — see `messagesAll` in producers/ for the measurement.
+    # THE BOOK'S WHOLE CHATTER, one sweep. The anchored joins below ask per record, which is right
+    # for one account and refuses across the book; a query that ALSO sweeps `MATCH (n:AccountNote)`
+    # has them ride this sweep instead, matched on leadKey / partnerKey (materializedKeyField).
     # A reader takes the side it wants with `WHERE n.model = 'res.partner' | 'crm.lead'` and
     # joins `n.res_id` to the customer or lead sweep graph-side, which costs nothing.
     - { anchorLabel: OdooBook, relationship: HAS_MESSAGE, keyField: scope,
@@ -269,16 +271,16 @@
         recordKeyField: scopeKey, producer: messagesAll, maxFanoutTotal: 50000, implicitDoor: true,
         description: "The same sweep, by the business vocabulary's name for it." }
     - { anchorLabel: OdooLead, relationship: HAS_MESSAGE, keyField: id, recordKeyField: leadKey,
-        producer: messagesByLead,
+        producer: messagesByLead, materializedKeyField: leadKey,
         description: "The opportunity's chatter thread — recent interactions on the deal." }
     - { anchorLabel: OdooLead, relationship: HAS_NOTE, keyField: id, recordKeyField: leadKey,
-        producer: messagesByLead,
+        producer: messagesByLead, materializedKeyField: leadKey,
         description: "What was written on the deal (the same thread, by the vocabulary's name)." }
     - { anchorLabel: OdooCustomer, relationship: HAS_NOTE, keyField: id, recordKeyField: res_id,
-        producer: messagesByPartner,
+        producer: messagesByPartner, materializedKeyField: partnerKey,
         description: "What was written on the company's own record." }
     - { anchorLabel: OdooContact, relationship: HAS_NOTE, keyField: id, recordKeyField: res_id,
-        producer: messagesByPartner,
+        producer: messagesByPartner, materializedKeyField: partnerKey,
         description: "What was written on a contact's record." }
 
 # A calendar meeting. The preparation anchor: walk MEETING_WITH to the attendee partners and

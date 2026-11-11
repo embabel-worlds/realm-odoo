@@ -638,6 +638,8 @@
     message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
     # The vocabulary's AccountNote.writtenOn: the day, from Odoo's UTC timestamp.
     writtenOn: "CASE r.date WHEN false THEN null ELSE substring(r.date, 0, 10) END"
+    # The same key the book sweep computes, so a note reached either way reads alike.
+    partnerKey: "r.res_id"
   # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
   # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
   # the partners after it come back with nothing — the starvation `batchSafe: false` exists
@@ -728,6 +730,11 @@
     message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
     # The vocabulary's AccountNote.writtenOn: the day, from Odoo's UTC timestamp.
     writtenOn: "CASE r.date WHEN false THEN null ELSE substring(r.date, 0, 10) END"
+    # Which deal, or which company or contact, the message is on, split by model: `res_id` alone
+    # collides across the two (deal 7 and partner 7 are different records). These are what the
+    # anchored note joins ride when a query has swept the whole chatter (materializedKeyField).
+    leadKey: "CASE r.model WHEN 'crm.lead' THEN r.res_id ELSE null END"
+    partnerKey: "CASE r.model WHEN 'res.partner' THEN r.res_id ELSE null END"
   pushdown:
     - { property: model, op: EQUALS, argPath: "domain.-", clause: ["model", "=", "{value}"] }
     - { property: model, op: IN, argPath: "domain.-", clause: ["model", "in", "{values}"] }
