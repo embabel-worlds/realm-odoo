@@ -12,8 +12,8 @@ here is reconciled against Odoo directly by `tests/verify.sh`; every question li
 > → view `OdooCustomerCount` — **9**
 
 > **Which customers owe us most money?**
-> → view `OdooReceivablesByCustomer` — Acme Corporation, **$193,281.25** across 6 unpaid
-> invoices; then Atlassian $84,000, Azure Interior $63,500, Qantas $52,750…
+> → view `OdooReceivablesByCustomer` — the customers ranked by what they owe, each with the amount
+> outstanding and how many unpaid invoices make it up.
 
 > **What are the 10 biggest outstanding invoices?**
 > → view `OdooOutstandingInvoices` — top: Atlassian's SEED-ATL-1, **$84,000**, every row

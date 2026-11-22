@@ -98,8 +98,8 @@ A customer or a deal found by a query can be worked on where it is found. `OdooC
 
 ```js
 const { rows } = await gateway.cypher.query({ cypher: `
-  MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer) WHERE c.name = 'Acme Corporation' RETURN c` });
-state.set("acme", rows[0].c);                       // bound with its type's methods
+  MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer) WHERE c.name = $name RETURN c`, params: { name } });
+state.set("customer", rows[0].c);                       // bound with its type's methods
 const acme = state.get("acme");
 await acme.addNote("Second failed payment this month; chasing.");
 await acme.bookCall({ title: "Payment review", start: "2026-10-20T15:00:00" });

@@ -66,7 +66,7 @@
     status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
     amount: "toFloat(r.expected_revenue)"
     closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
-  # Paged like the book's other doors: one stage can hold more than a page — 849 Won deals here —
+  # Paged like the book's other doors: one stage can hold more than a page —
   # and an unpaged door truncates at the limit, which a ranked view then refuses as INCOMPLETE.
   paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 250 }
   cache: { kind: ttl, seconds: 300 }
