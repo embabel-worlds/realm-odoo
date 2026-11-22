@@ -99,6 +99,7 @@
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
     city: "CASE r.city WHEN false THEN null ELSE r.city END"
     country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
+    country: "CASE r.country_id WHEN false THEN null ELSE r.country_id[1] END"
     website: "CASE r.website WHEN false THEN null ELSE r.website END"
     industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
@@ -180,6 +181,7 @@
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
     city: "CASE r.city WHEN false THEN null ELSE r.city END"
     country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
+    country: "CASE r.country_id WHEN false THEN null ELSE r.country_id[1] END"
     website: "CASE r.website WHEN false THEN null ELSE r.website END"
     industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
@@ -424,12 +426,13 @@
       - ["res_id", "in", []]
       - ["message_type", "in", ["comment", "email"]]
     fields: [res_id, body, date, author_id, subject, message_type]
-    load: ""
+    # No `load: ""`: author_id is this door's only many2one, and its pair is where the author's NAME is.
     limit: 200
   compute:
     body: "CASE r.body WHEN false THEN null ELSE r.body END"
     date: "CASE r.date WHEN false THEN null ELSE r.date END"
-    author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id END"
+    author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id[0] END"
+    authorName: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
     subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
     message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
     # The vocabulary's AccountNote.writtenOn: the day, from Odoo's UTC timestamp.
@@ -508,6 +511,7 @@
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
     city: "CASE r.city WHEN false THEN null ELSE r.city END"
     country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
+    country: "CASE r.country_id WHEN false THEN null ELSE r.country_id[1] END"
     website: "CASE r.website WHEN false THEN null ELSE r.website END"
     industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
@@ -564,6 +568,7 @@
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
     city: "CASE r.city WHEN false THEN null ELSE r.city END"
     country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
+    country: "CASE r.country_id WHEN false THEN null ELSE r.country_id[1] END"
     website: "CASE r.website WHEN false THEN null ELSE r.website END"
     industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
@@ -662,12 +667,13 @@
       - ["res_id", "in", []]
       - ["message_type", "in", ["comment", "email"]]
     fields: [res_id, body, date, author_id, subject, message_type]
-    load: ""
+    # No `load: ""`: author_id is this door's only many2one, and its pair is where the author's NAME is.
     limit: 200
   compute:
     body: "CASE r.body WHEN false THEN null ELSE r.body END"
     date: "CASE r.date WHEN false THEN null ELSE r.date END"
-    author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id END"
+    author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id[0] END"
+    authorName: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
     subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
     message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
     # The vocabulary's AccountNote.writtenOn: the day, from Odoo's UTC timestamp.
@@ -722,6 +728,7 @@
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
     city: "CASE r.city WHEN false THEN null ELSE r.city END"
     country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
+    country: "CASE r.country_id WHEN false THEN null ELSE r.country_id[1] END"
     website: "CASE r.website WHEN false THEN null ELSE r.website END"
     industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
@@ -753,13 +760,14 @@
       - ["model", "in", ["res.partner", "crm.lead"]]
       - ["message_type", "in", ["comment", "email"]]
     fields: [model, res_id, body, date, author_id, subject, message_type]
-    load: ""
+    # No `load: ""`: author_id is this door's only many2one, and its pair is where the author's NAME is.
     limit: 500
   compute:
     model: "CASE r.model WHEN false THEN null ELSE r.model END"
     body: "CASE r.body WHEN false THEN null ELSE r.body END"
     date: "CASE r.date WHEN false THEN null ELSE r.date END"
-    author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id END"
+    author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id[0] END"
+    authorName: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
     subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
     message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
     # The vocabulary's AccountNote.writtenOn: the day, from Odoo's UTC timestamp.

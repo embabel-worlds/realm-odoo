@@ -32,14 +32,14 @@
     expected_revenue: "Expected Revenue, in company currency."
     probability: "Probability percent; 100 on won, 0 on lost."
     email_from: "Email of the contact the lead came from."
-    stage_id: "Stage id."
+    stage_id: "Stage id. The stage's NAME is `stage`."
     create_date: "When the lead was created."
     date_closed: "When the opportunity was won or lost (set on close)."
     won_status: "won, lost or pending — Odoo's own words; pending means still open."
     date_deadline: "Expected closing date."
-    user_id: "The salesperson's user id."
+    user_id: "The salesperson's user id. Their NAME is `ownerName`."
     active: "False once the opportunity is archived, which is how Odoo marks a LOST deal."
-    stageKey: "Echo of the stage name this lead was fetched under."
+    stageKey: "Set only on a lead reached through OdooStagePipeline (the stage it was fetched under); null otherwise. For a lead's stage read `stage`."
     scopeKey: "Echo of the book scope this lead was fetched under."
   virtualJoins:
     - { anchorLabel: OdooBook, relationship: HAS_OPEN_LEAD, keyField: scope,
@@ -81,7 +81,8 @@
     email: "Email address."
     phone: "Phone."
     city: "City."
-    country_id: "Country id."
+    country_id: "Country id. The country's NAME is `country`."
+    country: "The country, by name."
     is_company: "True for companies, false for individuals."
     # What identifies the COMPANY, as opposed to `id`, which identifies Odoo's record of it and
     # is what every join in this realm keys on. The spine normalizes; this realm sends the URL
@@ -95,9 +96,9 @@
       hub: CustomerAccount
       description: "Company website URL, as Odoo holds it. A domain identifies a company; a name does not. Odoo spells 'unset' as FALSE, which keys nothing."
       metadata: { canonical: website }
-    industry_id: "Industry id."
+    industry_id: "Industry id. Its NAME is `industry`."
     industry: { description: "Industry, as Odoo names it ('Manufacturing').", metadata: { canonical: industry } }
-    user_id: "The salesperson's user id."
+    user_id: "The salesperson's user id. Their NAME is `ownerName`."
     ownerName: { description: "The salesperson who owns the account, by name.", metadata: { canonical: ownerName } }
     # Odoo's own measure: customer_rank counts the sales and invoices made out to the partner,
     # so above zero they have bought from us. A supplier we have never sold to is neither.
@@ -250,7 +251,8 @@
     subject: "Subject, when the message was an email."
     message_type: "comment (internal note / log) or email."
     res_id: "The id of the record it was written on."
-    author_id: "The author's partner id."
+    author_id: "The author's partner id. Their NAME is `authorName`."
+    authorName: "Who wrote it, by name."
     leadKey: "The deal this message is on: the lead it was fetched under, or its res_id when the book sweep read a crm.lead message."
     partnerKey: "The company or contact this message is on: its res_id when it is a res.partner message."
     # WHICH KIND of record `res_id` points at — `res.partner` (a company or a contact) or
