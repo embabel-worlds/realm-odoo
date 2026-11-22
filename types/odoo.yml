@@ -170,8 +170,11 @@
     - { anchorLabel: OdooBook, relationship: HAS_UNPAID_INVOICE, keyField: scope,
         recordKeyField: scopeKey, producer: invoicesUnpaidAll, maxFanoutTotal: 50000,
         description: "Every posted, unpaid customer invoice on the book." }
+    # materializedKeyField: once the book's unpaid invoices are swept (HAS_UNPAID_INVOICE from
+    # OdooBook), a customer's are the swept invoices whose partner_id is its id — no fetch per
+    # customer, which is refused above maxAnchors on a book of thousands (embabel/me#1489).
     - { anchorLabel: OdooCustomer, relationship: HAS_UNPAID_INVOICE, keyField: id,
-        recordKeyField: partnerKey, producer: unpaidInvoicesByPartner,
+        recordKeyField: partnerKey, producer: unpaidInvoicesByPartner, materializedKeyField: partner_id,
         description: "Posted customer invoices not fully paid." }
     # Same records, anchored one hop EARLIER: lead and invoice both carry partner_id, so the
     # pipeline question reaches invoices at depth 2 (a branch off the lead) instead of a

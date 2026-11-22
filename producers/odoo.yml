@@ -5,18 +5,19 @@
 # value". Comparing a string or a number with `false` is simply not equal in Cypher, so a real
 # value passes through untouched. Numbers are not listed; Odoo sends 0 for those, which is a value.
 
-# All four producers speak to Odoo's MIDDLE TIER — search_read through JSON-2 — never the
-# database. `load: ""` is load-bearing on every one: it makes many2one fields come back as bare
-# ids, which is what the joins key on; without it partner_id arrives as an [id, name] pair and
-# every traversal silently matches nothing.
+# Every producer speaks to Odoo's MIDDLE TIER — search_read through JSON-2 — never the
+# database. The joins key on BARE many2one ids: passed through raw, partner_id arrives as an
+# [id, name] pair and every traversal silently matches nothing. A door either asks for bare ids
+# with `load: ""`, or fetches the pairs and computes each many2one back to its id — the rule below.
 #
-# THE PARTNER DOORS are the exception, and keep the rule another way. A partner is what the
+# THE PARTNER AND LEAD DOORS keep the rule the second way. A partner is what the
 # business vocabulary's CustomerAccount is filled from, and the account wants NAMES Odoo only
 # sends inside a many2one pair: the industry ("Manufacturing") and the salesperson ("Mike
 # Davis"). JSON-2's search_read cannot read a related field by path, and `load: ""` throws the
-# name away. So these five doors fetch the pairs, and their `compute:` puts every many2one back
-# to its bare id (`r.x[0]`) — the shape the rest of the realm keys on — while lifting the name
-# (`r.x[1]`) into a property of its own. Every expression reads the record as fetched, so
+# name away. A lead is the vocabulary's Opportunity, which wants the stage ("Proposal"), the
+# salesperson and the currency the same way. So these doors fetch the pairs, and their
+# `compute:` puts every many2one back to its bare id (`r.x[0]`) — the shape the rest of the
+# realm keys on — while lifting the name (`r.x[1]`) into a property of its own. Every expression reads the record as fetched, so
 # `industry` sees the pair even though `industry_id` is computed to an id beside it.
 #
 # `sourceUrl` is built from the id against Odoo's BROWSER address, which is not the API's: the
@@ -41,22 +42,33 @@
       # IN-list — a 500. Until the engine drops falsy join keys, this door carries
       # only partnered leads; the trade is stated here rather than discovered.
       - ["partner_id", "!=", false]
-    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline]
-    load: ""
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, company_currency]
+    # No `load: ""`: a lead door is a PARTNER-DOOR shape (see the top of this file) — the
+    # vocabulary wants the stage, salesperson and currency NAMES, which come only inside pairs.
     limit: 200
   compute:
-    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
     email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
-    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id END"
+    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
     # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
     # says `pending` for open), amount is the deal value, closeOn the expected close while open
     # and the day it was decided once won or lost. Odoo's own fields stay beside them.
     title: "r.name"
+    # The vocabulary's names, lifted out of the pairs: the pipeline step in the CRM's own words,
+    # the salesperson, and the company currency the amount is in.
+    stage: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    currency: "CASE r.company_currency WHEN false THEN null ELSE r.company_currency[1] END"
+    sourceUrl: "'http://localhost:8069/odoo/crm.lead/' + toString(r.id)"
     status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
     amount: "toFloat(r.expected_revenue)"
     closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
+  # Paged like the book's other doors: one stage can hold more than a page — 849 Won deals here —
+  # and an unpaged door truncates at the limit, which a ranked view then refuses as INCOMPLETE.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 250 }
   cache: { kind: ttl, seconds: 300 }
 
 # Customers by id — resolves a lead's partner_id (bare id, thanks to load:"") to the partner
@@ -270,18 +282,26 @@
       # Partnerless leads excluded here for the same falsy-key reason as leadsByStage:
       # their partner_id is FALSE, and false inside a downstream integer batch breaks it.
       - ["partner_id", "!=", false]
-    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, won_status, date_deadline, date_closed]
-    load: ""
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, won_status, date_deadline, date_closed, user_id, company_currency]
+    # No `load: ""`: a lead door is a PARTNER-DOOR shape (see the top of this file) — the
+    # vocabulary wants the stage, salesperson and currency NAMES, which come only inside pairs.
     limit: 200
   compute:
-    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
     email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
-    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id END"
+    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
     # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
     # says `pending` for open), amount is the deal value, closeOn the expected close while open
     # and the day it was decided once won or lost. Odoo's own fields stay beside them.
     title: "r.name"
+    # The vocabulary's names, lifted out of the pairs: the pipeline step in the CRM's own words,
+    # the salesperson, and the company currency the amount is in.
+    stage: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    currency: "CASE r.company_currency WHEN false THEN null ELSE r.company_currency[1] END"
+    sourceUrl: "'http://localhost:8069/odoo/crm.lead/' + toString(r.id)"
     status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
     amount: "toFloat(r.expected_revenue)"
     closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
@@ -343,22 +363,29 @@
       - ["active", "=", false]
       # Partnerless leads excluded for the same falsy-key reason as leadsByStage.
       - ["partner_id", "!=", false]
-    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active]
-    load: ""
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active, company_currency]
+    # No `load: ""`: a lead door is a PARTNER-DOOR shape (see the top of this file) — the
+    # vocabulary wants the stage, salesperson and currency NAMES, which come only inside pairs.
     limit: 1000
   compute:
-    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
     email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
-    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id END"
+    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
     won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
-    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
     # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
     # says `pending` for open), amount is the deal value, closeOn the expected close while open
     # and the day it was decided once won or lost. Odoo's own fields stay beside them.
     title: "r.name"
+    # The vocabulary's names, lifted out of the pairs: the pipeline step in the CRM's own words,
+    # the salesperson, and the company currency the amount is in.
+    stage: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    currency: "CASE r.company_currency WHEN false THEN null ELSE r.company_currency[1] END"
+    sourceUrl: "'http://localhost:8069/odoo/crm.lead/' + toString(r.id)"
     status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
     amount: "toFloat(r.expected_revenue)"
     closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
@@ -562,22 +589,29 @@
       - "|"
       - ["active", "=", true]
       - ["active", "=", false]
-    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active]
-    load: ""
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active, company_currency]
+    # No `load: ""`: a lead door is a PARTNER-DOOR shape (see the top of this file) — the
+    # vocabulary wants the stage, salesperson and currency NAMES, which come only inside pairs.
     limit: 200
   compute:
-    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
     email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
-    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id END"
+    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
     won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
-    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
     # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
     # says `pending` for open), amount is the deal value, closeOn the expected close while open
     # and the day it was decided once won or lost. Odoo's own fields stay beside them.
     title: "r.name"
+    # The vocabulary's names, lifted out of the pairs: the pipeline step in the CRM's own words,
+    # the salesperson, and the company currency the amount is in.
+    stage: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    currency: "CASE r.company_currency WHEN false THEN null ELSE r.company_currency[1] END"
+    sourceUrl: "'http://localhost:8069/odoo/crm.lead/' + toString(r.id)"
     status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
     amount: "toFloat(r.expected_revenue)"
     closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"

@@ -51,7 +51,8 @@
       default: 50
       description: "Maximum customers."
   cypher: |
-    MATCH (b:OdooBook {scope:'all'})-[:HAS_CUSTOMER]->(c:OdooCustomer)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
+    MATCH (b)-[:HAS_CUSTOMER]->(c:OdooCustomer)-[:HAS_UNPAID_INVOICE]->(i)
     WITH c, count(i) AS unpaidInvoices, sum(i.amount_residual) AS totalOwed
     RETURN c.id AS customerId, c.name AS customer, c.email AS email, unpaidInvoices, totalOwed
     ORDER BY totalOwed DESC

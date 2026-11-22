@@ -32,7 +32,7 @@
     WHERE m.start >= toString(date()) AND toLower(c.name) CONTAINS toLower($customer)
     OPTIONAL MATCH (c)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
     WITH b, m, c, count(DISTINCT i) AS unpaid, coalesce(sum(i.amount_residual),0) AS owed
-    OPTIONAL MATCH (b)-[:HAS_OPEN_LEAD]->(l:OdooLead)-[:LEAD_OF]->(c)
+    OPTIONAL MATCH (c)-[:HAS_OPPORTUNITY]->(l:OdooLead) WHERE l.status = 'open'
     OPTIONAL MATCH (l)-[:HAS_MESSAGE]->(msg:OdooMessage)
     WITH m, c, unpaid, owed, l, collect(DISTINCT msg.body) AS bodies
     WITH m, c, unpaid, owed,
@@ -65,8 +65,9 @@
 
 - name: OdooDealTriage
   description: |
-    Classify every open opportunity — strategic / standard / at_risk — and read the sentiment
-    of its recent interactions from the chatter thread. Answers "which deals are in trouble",
+    Classify the largest open opportunities (by expected revenue, `limit` of them) — strategic /
+    standard / at_risk — and read the sentiment of their recent interactions from the chatter
+    thread. Each deal is a model call, so the view triages the top of the pipeline, not all of it. Answers "which deals are in trouble",
     "which deals are at risk", "how do our opportunities feel", "triage the pipeline",
     "understand our recent interactions", "which opportunities need attention". Sentiment is
     null for a deal nobody has written on: silence is not neutral, it is unknown.
@@ -75,7 +76,11 @@
     triage:
       type: string
       default: ""
-      description: "Only deals judged this way: strategic, standard or at_risk. Empty = every open deal."
+      description: "Only deals judged this way: strategic, standard or at_risk. Empty = every triaged deal."
+    limit:
+      type: int
+      default: 50
+      description: "How many of the largest open deals to triage."
   # The lens this replaces (lenses/deal-triage.yml) composed three queries and two
   # gateway.ai.classify calls in script; the engine's classify() aggregation now carries the
   # same judgments in-query, the rubric travelling as its third argument. The figures
@@ -89,6 +94,7 @@
   # noise it tolerates (same stance as the briefing).
   cypher: |
     MATCH (b:OdooBook)-[:HAS_OPEN_LEAD]->(l:OdooLead)-[:LEAD_OF]->(c:OdooCustomer)
+    WITH l, c ORDER BY l.expected_revenue DESC LIMIT $limit
     OPTIONAL MATCH (l)-[:HAS_MESSAGE]->(msg:OdooMessage)
     WITH l, c, collect(DISTINCT msg.body) AS bodies
     OPTIONAL MATCH (c)-[:HAS_DIFFBOT_ORG]->(d:DiffbotOrganization)

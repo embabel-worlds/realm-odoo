@@ -25,11 +25,13 @@ CUSTOMERS=$(curl -s -X POST "$ODOO/json/2/res.partner/search_count" -H "Authoriz
   -H 'Content-Type: application/json' -d '{"domain":[["customer_rank",">",0]]}')
 TRUTH=$(curl -s -X POST "$ODOO/json/2/account.move/search_read" -H "Authorization: Bearer $ODOO_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"domain":[["move_type","=","out_invoice"],["state","=","posted"],["payment_state","in",["not_paid","partial"]]],"fields":["partner_id","amount_residual"],"load":"","limit":500}')
+  -d '{"domain":[["move_type","=","out_invoice"],["state","=","posted"],["payment_state","in",["not_paid","partial"]]],"fields":["partner_id","amount_residual"],"load":""}')
 TOP_OWED=$(echo "$TRUTH" | py "
 import json,sys,collections
 t=collections.defaultdict(float)
 for r in json.load(sys.stdin): t[r['partner_id']]+=r['amount_residual']
+# A book with nothing owed is a real book: the honest top debtor is none, not a crash.
+if not t: print('none'); raise SystemExit
 pid,amt=max(t.items(), key=lambda kv: kv[1]); print(f'{pid}:{amt:.2f}')")
 echo "  customers=$CUSTOMERS  top-debtor(partner:total)=$TOP_OWED"
 
@@ -49,6 +51,7 @@ for r in rows:
     if r.get('invoiceId') is not None: seen[r['invoiceId']]=(int(r['customerId']),r['owed'])
 tot={}
 for cid,owed in seen.values(): tot[cid]=tot.get(cid,0)+owed
+if not tot: print('none'); raise SystemExit
 pid,amt=max(tot.items(), key=lambda kv: kv[1]); print(f'{pid}:{amt:.2f}')")
 check "view top debtor (vs L0)" "$TOP_OWED" "$VIEW_TOP"
 
@@ -68,7 +71,9 @@ nums=[v for v in r.values() if isinstance(v,(int,float))]
 print(f'{max(nums):.2f}' if nums else 'NO-NUMBER')")
   case "$Q" in
     "How many customers"*) check "NL: $Q" "$CUSTOMERS.00" "$GOT" ;;
-    *) check "NL: $Q (top figure)" "$EXP_AMT" "$GOT" ;;
+    # Nothing owed: the honest answer has no debtor rows (or a zero), never an invented figure.
+    *) if [ "$TOP_OWED" = none ]; then case "$GOT" in NO-ROWS|0.00) check "NL: $Q (nothing owed)" "$GOT" "$GOT" ;; *) check "NL: $Q (nothing owed)" "NO-ROWS" "$GOT" ;; esac
+       else check "NL: $Q (top figure)" "$EXP_AMT" "$GOT"; fi ;;
   esac
 done
 
