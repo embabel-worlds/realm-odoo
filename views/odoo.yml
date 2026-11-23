@@ -13,7 +13,7 @@
     stage:
       type: string
       default: "Proposition"
-      description: "The CRM stage name exactly as Odoo shows it: New, Qualified, Proposition, Won."
+      description: "The CRM stage name exactly as Odoo shows it. Stages differ between businesses; the ones in use are the distinct `stage` values of the leads (MATCH (b:OdooBook)-[:HAS_ANY_LEAD]->(l) RETURN DISTINCT l.stage)."
     limit:
       type: int
       default: 50
