@@ -3,14 +3,22 @@
 # every question that ever disappointed them. Each is a permanent regression test; the runner
 # is tests/verify.sh. Money and count questions assert matchesView: the NL answer must equal
 # the curated view's figure — reconciliation without literals to rot.
+#
+# `requires:` names what a question is about that not every book has: `seed` — the demo book
+# seed/ loads (its named companies, stages, chatter arcs and meetings); `receivables` — unpaid
+# invoices in Odoo at all (a world that bills elsewhere has none, and answers money questions from
+# there). On a book without it the runner says SKIP and why.
 
 - question: "How many customers do we have"
   expect: { matchesView: { name: OdooCustomerCount, column: customers } }
 - question: "Which customers owe us most money"
+  requires: [receivables]
   expect: { matchesView: { name: OdooReceivablesByCustomer, column: totalOwed } }
 - question: "which is our most valuable customer"
+  requires: [receivables]
   expect: { matchesView: { name: OdooReceivablesByCustomer, column: totalOwed } }
 - question: "total outstanding receivables per client"
+  requires: [receivables]
   expect: { matchesView: { name: OdooReceivablesByCustomer, column: totalOwed } }
 - question: "what is our biggest win"
   expect: { matchesView: { name: OdooWins, column: value } }
@@ -29,14 +37,19 @@
 - question: "what is our biggest open opportunity"
   expect: { matchesView: { name: OdooOpenPipeline, column: expectedRevenue } }
 - question: "who still hasn't paid us"
+  requires: [receivables]
   expect: { nonEmpty: true }
 - question: "how many unpaid invoices are there"
+  requires: [receivables]
   expect: { nonEmpty: true }
 - question: "which opportunities are at the Proposition stage"
+  requires: [seed]
   expect: { nonEmpty: true }
 - question: "what are the 10 biggest outstanding invoices"
+  requires: [receivables]
   expect: { matchesView: { name: OdooOutstandingInvoices, column: owed } }
 - question: "largest unpaid invoices"
+  requires: [receivables]
   expect: { matchesView: { name: OdooOutstandingInvoices, column: owed } }
 - question: "what are our 10 biggest opportunities over 60%"
   expect: { matchesView: { name: OdooOpenPipeline, column: expectedRevenue, args: { minProbability: 60 } } }
@@ -46,6 +59,7 @@
 # question filters BY a model label, whose membership two runs may judge differently, so it
 # asserts presence — the seed's souring thread exists precisely so this stays honest.
 - question: "which of our deals are at risk"
+  requires: [seed]
   expect: { nonEmpty: true }
 - question: "how do our open opportunities feel"
   expect: { matchesView: { name: OdooDealTriage, column: revenue } }
@@ -54,6 +68,7 @@
 # Meeting prep is a VIEW (OdooMeetingBriefing) — virtual cypher end to end, synthesize()
 # composing the prose in-query — so the money beside the prose reconciles like any figure.
 - question: "prep me for my meeting with Qantas"
+  requires: [seed]
   expect: { matchesView: { name: OdooMeetingBriefing, column: owed, args: { customer: "Qantas" } } }
 # Totals per stage and per salesperson are their own views: the pipeline view lists deals, and a
 # total over a listing capped at 100 would be a total of the top 100.
@@ -65,6 +80,8 @@
   expect: { minRows: 0 }   # the demo may have lost nothing this quarter; asserts the ask runs
 # One company, named exactly: three source calls whatever the size of the book (verify.sh L2b).
 - question: "how are we doing with Qantas"
+  requires: [seed]
   expect: { matchesView: { name: OdooAccountSnapshot, column: owed, args: { company: "Qantas" } } }
 - question: "show me Qantas and its subsidiaries"
+  requires: [seed]
   expect: { nonEmpty: true }

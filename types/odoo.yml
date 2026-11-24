@@ -92,7 +92,7 @@
     # means it ("open or decided"); the pipeline is `WHERE o.status = 'open'`.
     - { anchorLabel: OdooBook, relationship: HAS_ANY_LEAD, keyField: scope,
         recordKeyField: scopeKey, producer: leadsAll, maxFanoutTotal: 50000, implicitDoor: true,
-        description: "Every deal on the book — open, won and lost, archived or not. Read status to tell them apart; `WHERE l.status = 'won'` is applied by Odoo." }
+        description: "Every deal on the book — open, won AND lost. NOT the pipeline: a pipeline total (by stage, by owner, overall) is HAS_OPEN_LEAD, or the OdooPipelineByStage view. `WHERE l.status = 'won'` is applied by Odoo." }
     # Won and lost only, cached an hour: a decided deal almost never changes. The door for wins,
     # losses and win rates over a window, which no longer re-read the open pipeline to find them.
     - { anchorLabel: OdooBook, relationship: HAS_DECIDED_LEAD, keyField: scope,

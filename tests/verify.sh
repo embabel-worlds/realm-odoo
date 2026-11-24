@@ -33,7 +33,21 @@ for r in json.load(sys.stdin): t[r['partner_id']]+=r['amount_residual']
 # A book with nothing owed is a real book: the honest top debtor is none, not a crash.
 if not t: print('none'); raise SystemExit
 pid,amt=max(t.items(), key=lambda kv: kv[1]); print(f'{pid}:{amt:.2f}')")
-echo "  customers=$CUSTOMERS  top-debtor(partner:total)=$TOP_OWED"
+# WHICH BOOK THIS IS. Some checks are about the demo book seed/ loads — its named companies, its
+# chatter arcs, its meetings — and some need Odoo to hold receivables at all. A book without them is
+# a real book (a world whose invoices live in a billing system is the usual one), so those checks
+# say SKIP and why, rather than failing against a book they were never about.
+SEEDED=$(ODOO="$ODOO" ODOO_KEY="$ODOO_KEY" py "
+import json, os, urllib.request
+def count(model, domain):
+    req = urllib.request.Request(os.environ['ODOO'] + '/json/2/' + model + '/search_count', data=json.dumps({'domain': domain}).encode(),
+                                 headers={'Authorization': 'Bearer ' + os.environ['ODOO_KEY'], 'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req) as r: return json.load(r)
+seeded = count('res.partner', [['name', '=', 'Qantas']]) > 0 and \
+         count('crm.lead', [['name', '=', 'SEED Team workflow rollout'], '|', ['active', '=', True], ['active', '=', False]]) > 0
+print(1 if seeded else 0)")
+RECEIVABLES=$([ "$TOP_OWED" = none ] && echo 0 || echo 1)
+echo "  customers=$CUSTOMERS  top-debtor(partner:total)=$TOP_OWED  demo-seed=$SEEDED  receivables=$RECEIVABLES"
 
 echo "== L1: traversal reconciles =="
 KG=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
@@ -257,30 +271,38 @@ nums=[v for v in r.values() if isinstance(v,(int,float))]
 print(f'{max(nums):.2f}' if nums else 'NO-NUMBER')")
   case "$Q" in
     "How many customers"*) check "NL: $Q" "$CUSTOMERS.00" "$GOT" ;;
-    # Nothing owed: the honest answer has no debtor rows (or a zero), never an invented figure.
-    *) if [ "$TOP_OWED" = none ]; then case "$GOT" in NO-ROWS|0.00) check "NL: $Q (nothing owed)" "$GOT" "$GOT" ;; *) check "NL: $Q (nothing owed)" "NO-ROWS" "$GOT" ;; esac
+    # Odoo owes nothing: there is no Odoo figure to reconcile, and in a world whose invoices live in
+    # a billing realm the honest answer comes from there.
+    *) if [ "$TOP_OWED" = none ]; then echo "  skip NL: $Q (Odoo holds no unpaid invoices; nothing here to reconcile)"
        else check "NL: $Q (top figure)" "$EXP_AMT" "$GOT"; fi ;;
   esac
 done
 
 echo "== L5: the app's own calls =="
-for a in prospect prospect.css prospect.js; do
-  code=$(curl -s -o /dev/null -w '%{http_code}' -K "$AUTHCFG" "$APPLIANCE/api/v1/apps/$a")
+# An app is served at its scoped URL, /apps/<realm>/<file>; the flat /apps/<file> only redirects there.
+for a in prospect.html prospect.css prospect.js; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' -K "$AUTHCFG" "$APPLIANCE/apps/odoo/$a")
   check "app asset $a" "200" "$code"
 done
 
 echo "== L3b: the battery (tests/questions.yml) =="
 DIR="$(dirname "$0")"
-python3 - "$DIR/questions.yml" "$APPLIANCE" "$AUTHCFG" <<'PYEOF' || fail=1
+python3 - "$DIR/questions.yml" "$APPLIANCE" "$AUTHCFG" "$SEEDED" "$RECEIVABLES" <<'PYEOF' || fail=1
 import json, sys, subprocess, yaml
 
 qfile, base, auth = sys.argv[1], sys.argv[2], sys.argv[3]
+have = {"seed": sys.argv[4] == "1", "receivables": sys.argv[5] == "1"}
 battery = yaml.safe_load(open(qfile))
 def curl(path, body):
     out = subprocess.run(["curl", "-s", "-K", auth, "-X", "POST", base + path,
                           "-H", "Content-Type: application/json", "-d", json.dumps(body)],
                          capture_output=True, text=True).stdout
-    return json.loads(out, strict=False)
+    # An empty or non-JSON reply is a failed call, and is reported as one on that question rather
+    # than ending the battery with a traceback.
+    try:
+        return json.loads(out, strict=False)
+    except ValueError:
+        return {"rows": [], "data": [], "error": "no JSON reply: " + out[:120]}
 
 def top_figure(rows, column=None):
     if not rows: return None
@@ -294,6 +316,10 @@ def top_figure(rows, column=None):
 bad = 0
 for case in battery:
     q, exp = case["question"], case.get("expect", {"nonEmpty": True})
+    missing = [r for r in case.get("requires", []) if not have.get(r)]
+    if missing:
+        print("  skip " + q + " (this book has no " + " or ".join(missing) + ")")
+        continue
     a = curl("/api/v1/admin/kg/ask", {"question": q})
     rows = a.get("rows") or []
     if "matchesView" in exp:
@@ -368,7 +394,7 @@ ATRISK=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooDealTriage/i
   -H 'Content-Type: application/json' -d '{"args":{"triage":"at_risk"}}')
 PIPE=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooOpenPipeline/invoke" \
   -H 'Content-Type: application/json' -d '{"args":{}}')
-TRIAGE="$TRIAGE" ATRISK="$ATRISK" PIPE="$PIPE" python3 - <<'PYEOF' || fail=1
+TRIAGE="$TRIAGE" ATRISK="$ATRISK" PIPE="$PIPE" SEEDED="$SEEDED" python3 - <<'PYEOF' || fail=1
 import json, os, sys
 d = json.loads(os.environ['TRIAGE'])
 bad = 0
@@ -389,10 +415,14 @@ check("top revenue reconciles against the pipeline view",
       top(rows, "revenue") == top(pipe, "expectedRevenue"),
       f"{top(rows, 'revenue')} vs {top(pipe, 'expectedRevenue')}")
 by = {r.get("deal"): r for r in rows}
-atl, qf = by.get("SEED Team workflow rollout") or {}, by.get("SEED Fleet data platform") or {}
-check("seeded negative arc reads negative (Atlassian)", atl.get("sentiment") == "negative", str(atl))
-check("seeded positive arc reads positive (Qantas)", qf.get("sentiment") == "positive", str(qf))
-check("negative thread outweighs a 65% probability (at_risk)", atl.get("triage") == "at_risk", str(atl))
+# The two chatter arcs are the demo seed's; another book has neither.
+if os.environ.get("SEEDED") == "1":
+    atl, qf = by.get("SEED Team workflow rollout") or {}, by.get("SEED Fleet data platform") or {}
+    check("seeded negative arc reads negative (Atlassian)", atl.get("sentiment") == "negative", str(atl))
+    check("seeded positive arc reads positive (Qantas)", qf.get("sentiment") == "positive", str(qf))
+    check("negative thread outweighs a 65% probability (at_risk)", atl.get("triage") == "at_risk", str(atl))
+else:
+    print("  skip the seeded chatter arcs (this book is not the demo seed)")
 ar = json.loads(os.environ['ATRISK']).get("data") or []
 check("the triage parameter filters (every returned row is at_risk)",
       all(r.get("triage") == "at_risk" for r in ar), str([r.get("triage") for r in ar]))
@@ -406,8 +436,8 @@ echo "== L8: meeting briefings (virtual cypher + synthesize) — figures reconci
 PREP=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooMeetingBriefing/invoke" \
   -H 'Content-Type: application/json' -d '{"args":{}}')
 RECV=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooReceivablesByCustomer/invoke" \
-  -H 'Content-Type: application/json' -d '{"args":{}}')
-PREP="$PREP" RECV="$RECV" python3 - <<'PYEOF' || fail=1
+  -H 'Content-Type: application/json' -d '{"args":{"limit":100000}}')
+PREP="$PREP" RECV="$RECV" SEEDED="$SEEDED" python3 - <<'PYEOF' || fail=1
 import json, os, sys
 d = json.loads(os.environ['PREP'])
 recv = {r["customer"]: r["totalOwed"] for r in (json.loads(os.environ['RECV']).get("data") or [])}
@@ -419,7 +449,16 @@ def check(name, ok, detail=""):
 check("view invocation succeeded", d.get("status") == "SUCCEEDED", str(d)[:150])
 rows = d.get("data") or []
 by = {r.get("meeting"): r for r in rows}
-for meeting, customer in [("Qantas quarterly review", "Qantas"), ("Atlassian rollout check-in", "Atlassian")]:
+# The two meetings are the demo seed's; on another book the figures beside every briefing still
+# reconcile against the receivables view.
+seeded = [("Qantas quarterly review", "Qantas"), ("Atlassian rollout check-in", "Atlassian")]
+if os.environ.get("SEEDED") != "1":
+    print("  skip the seeded meetings (this book is not the demo seed)")
+    seeded = []
+mismatched = [r.get("meeting") for r in rows
+              if round(float(r.get("owed") or 0), 2) != round(float(recv.get(r.get("customer")) or 0), 2)]
+check(f"every briefing's owed figure matches the receivables view ({len(rows)} briefings)", not mismatched, str(mismatched[:5]))
+for meeting, customer in seeded:
     r = by.get(meeting) or {}
     check(f"'{meeting}' is prepared", bool(r))
     if not r: continue
