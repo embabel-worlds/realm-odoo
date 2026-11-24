@@ -324,6 +324,47 @@ else:
           got == {str(r["id"]): (r["n"], money(r["owed"])) for r in folded.get("rows") or []}, str(folded.get("rows")))
     calls("pushed", pushed); calls("from records", folded)
 
+# THE DEALS. Every deal on the book, open, won or lost: how many, and their expected revenue.
+LEADS = ["|", ["active", "=", True], ["active", "=", False]]
+leads = ask_odoo("crm.lead", "search_read", {"domain": LEADS + [["partner_id", "!=", False]],
+                                             "fields": ["partner_id", "expected_revenue"], "load": ""})
+book = "MATCH (b:OdooBook {scope: 'all'})-[:HAS_ANY_LEAD]->(l:OdooLead)"
+pushed = kg(f"{book} RETURN count(l) AS n, sum(l.expected_revenue) AS revenue")
+folded = kg(f"{book} RETURN count(l) AS n, sum(l.expected_revenue) AS revenue, min(l.name) AS first")
+p, f = (pushed.get("rows") or [{}])[0], (folded.get("rows") or [{}])[0]
+check(f"deal count = Odoo's {len(leads)}", p.get("n") == len(leads), str(p))
+check(f"deal revenue = Odoo's {money(sum(r['expected_revenue'] for r in leads))}",
+      money(p.get("revenue")) == money(sum(r["expected_revenue"] for r in leads)), str(p))
+check("deal count and revenue = the same folded from the records",
+      (p.get("n"), money(p.get("revenue"))) == (f.get("n"), money(f.get("revenue"))), f"{p} vs {f}")
+check("deal count is one call per measure", pushed.get("apiCalls") == 2, str(pushed.get("apiCallLog")))
+calls("pushed", pushed); calls("from records", folded)
+
+# A CASE-SENSITIVE CONTAINS is widened by ilike, so its count must come from the records.
+word = next((w for r in ask_odoo("crm.lead", "search_read", {"domain": LEADS, "fields": ["name"], "limit": 1})
+             for w in r["name"].split() if len(w) > 3 and w.isalpha()), None)
+if word:
+    q = f"{book} WHERE l.name CONTAINS '{word}' RETURN count(l) AS n"
+    want = sum(1 for r in ask_odoo("crm.lead", "search_read", {"domain": LEADS + [["partner_id", "!=", False], ["name", "ilike", word]],
+                                                               "fields": ["name"], "load": ""}) if word in r["name"])
+    got = kg(q)
+    check(f"count of deals named with '{word}' (case as written) = {want}", (got.get("rows") or [{}])[0].get("n") == want, str(got.get("rows")))
+
+# PER CUSTOMER. The five customers with most deals: count and revenue by read_group, one call each.
+per = {}
+for r in leads: per.setdefault(r["partner_id"], []).append(r["expected_revenue"])
+top = sorted(per, key=lambda k: (-len(per[k]), k))[:5]
+ids = ", ".join(f"'{i}'" for i in top)
+q = f"MATCH (b:OdooBook {{scope: 'all'}})-[:HAS_CUSTOMER]->(c:OdooCustomer) WHERE c.id IN [{ids}] MATCH (c)-[:HAS_OPPORTUNITY]->(l:OdooLead)"
+pushed = kg(f"{q} RETURN c.id AS id, count(l) AS n, sum(l.expected_revenue) AS revenue ORDER BY id")
+folded = kg(f"{q} RETURN c.id AS id, count(l) AS n, sum(l.expected_revenue) AS revenue, min(l.name) AS first ORDER BY id")
+got = {str(r["id"]): (r["n"], money(r["revenue"])) for r in pushed.get("rows") or []}
+want = {str(k): (len(per[k]), money(sum(per[k]))) for k in top}
+check("per-customer deal count and revenue = Odoo's", got == want, f"{got} vs {want}")
+check("per-customer = the same folded from the records",
+      got == {str(r["id"]): (r["n"], money(r["revenue"])) for r in folded.get("rows") or []}, str(folded.get("rows")))
+calls("pushed", pushed); calls("from records", folded)
+
 import sys
 sys.exit(1 if bad else 0)
 PYEOF
