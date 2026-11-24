@@ -48,7 +48,7 @@
     for (const r of rows) {
       const c = byCustomer.get(r.customerId) ||
         { id: r.customerId, name: r.customer, email: r.email, opps: new Map(), invoices: new Map() };
-      if (r.leadId != null) c.opps.set(r.leadId, { name: r.opportunity, pipeline: r.pipeline });
+      if (r.leadId != null) c.opps.set(r.leadId, { name: r.opportunity, pipeline: r.expectedRevenue });
       if (r.invoiceId != null) c.invoices.set(r.invoiceId, { name: r.invoice, owed: r.owed, due: r.due });
       byCustomer.set(r.customerId, c);
     }

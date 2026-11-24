@@ -10,29 +10,75 @@
 # [id, name] pair and every traversal silently matches nothing. A door either asks for bare ids
 # with `load: ""`, or fetches the pairs and computes each many2one back to its id — the rule below.
 #
-# THE PARTNER AND LEAD DOORS keep the rule the second way. A partner is what the
+# THE PARTNER, LEAD AND INVOICE DOORS keep the rule the second way. A partner is what the
 # business vocabulary's CustomerAccount is filled from, and the account wants NAMES Odoo only
 # sends inside a many2one pair: the industry ("Manufacturing") and the salesperson ("Mike
 # Davis"). JSON-2's search_read cannot read a related field by path, and `load: ""` throws the
 # name away. A lead is the vocabulary's Opportunity, which wants the stage ("Proposal"), the
-# salesperson and the currency the same way. So these doors fetch the pairs, and their
-# `compute:` puts every many2one back to its bare id (`r.x[0]`) — the shape the rest of the
-# realm keys on — while lifting the name (`r.x[1]`) into a property of its own. Every expression reads the record as fetched, so
-# `industry` sees the pair even though `industry_id` is computed to an id beside it.
+# salesperson and the currency the same way; an invoice wants its currency. So these doors fetch
+# the pairs, and their `compute:` puts every many2one back to its bare id (`r.x[0]`) — the shape
+# the rest of the realm keys on — while lifting the name (`r.x[1]`) into a property of its own.
+# Every expression reads the record as fetched, so `industry` sees the pair even though
+# `industry_id` is computed to an id beside it.
 #
 # `sourceUrl` is built from the id against Odoo's BROWSER address, which is not the API's: the
 # appliance reaches Odoo at the spec's server URL, a person reaches it at this one. It is an
 # install-specific fact, the twin of `ODOO_BASE` in apps/prospect.js — see the README.
+#
+# FIELD SELECTION. Every door names its `fields`; search_read returns only those, so a door costs
+# the columns the realm reads and not the model's hundred. Add a field here when a type needs it,
+# never by dropping the list.
+#
+# WHAT THE SOURCE ABSORBS DECIDES WHAT THE QUESTION COSTS. An Odoo domain is a list of triples
+# ANDed together, so `domain.-` appends one conjunct and no `linkPrevious` is needed. Every
+# `pushdown:` property is the name the QUERY writes; the clause is what Odoo is asked, which is
+# how a vocabulary word reaches Odoo's own field (`stage` → `stage_id.name`, `ownerName` →
+# `user_id.name`). The third element is a whole-node `{value}`, so a number reaches Odoo
+# as a number rather than as its digits in quotes — and an id written as '42' reaches it as 42,
+# which is the only spelling an id domain matches.
+#
+#   - Text CONTAINS is `ilike`, declared `match: ci`: Odoo ignores case there, so it also answers
+#     `toLower(c.name) CONTAINS 'acme'`. `ilike` reads `%` and `_` as wildcards, which only ever
+#     WIDENS what Odoo returns; the graph re-applies the query's own comparison, so rows stay
+#     exact. That widening is also why no door declares `aggregates:` over a CONTAINS rule.
+#   - Dates carry a `valuePattern`. A datetime field (create_date, date_closed, start …) is UTC
+#     and Odoo compares it against 'YYYY-MM-DD' (midnight) or 'YYYY-MM-DD HH:MM:SS'; a date field
+#     (date_deadline, invoice_date_due) against 'YYYY-MM-DD' only. Those are also the spellings
+#     the graph compares the fetched strings in, so source and graph agree. Anything else — an ISO
+#     'T', a zone offset — stays a graph-side filter and the engine says so
+#     (PUSHDOWN_VALUE_UNMATCHED). `>` a bare date is not pushed: Odoo reads the date as midnight,
+#     the graph reads '2026-10-22 00:00:00' as AFTER '2026-10-22', and a record at exactly
+#     midnight would be lost.
+#   - Odoo's `in` with an empty list matches nothing, which is what an empty Cypher list means.
+#   - ONE rule per property and operator. A `valuePattern` that refuses a value makes the engine
+#     say the filter was not sent (PUSHDOWN_VALUE_UNMATCHED), rule by rule — so two rules that
+#     split a property's values between them would each report the other's values as unsent.
+#     That is why `status` maps only 'won' and 'lost' (to won_status) on the doors that hold every
+#     deal and only 'open' on the pipeline door, and why `priorityLabel` (four words for four
+#     codes) is filtered in the graph.
+#
+# WHY NO `aggregates:`. "How many" is still answered by reading the records. JSON-2 has the right
+# methods — `search_count`, `read_group` — but the engine asks an aggregate with the producer's
+# own arguments: `search_count` would receive the page `limit` and count at most a page, and
+# `read_group` needs a `groupby` no search_read door may carry. Until an aggregate can carry its
+# own arguments, declaring one would return a confident wrong number. The page sizes below keep
+# the read to a handful of calls.
+#
+# CACHE. Every door is a TTL cache, and every door also caches a miss (`negativeTtlSeconds`):
+# "this customer has no unpaid invoices" is the common answer, an empty calendar is an answer too,
+# and a positive-only cache asks Odoo again on every query. Partners change least (15 minutes); deals,
+# invoices, chatter and the calendar change with the working day (5 minutes); a decided deal —
+# won or lost — almost never changes again (an hour).
 
 # Open pipeline by stage NAME — the scan door. The anchor key (a stage name, e.g.
-# 'Proposition') is injected into the domain's IN list; echoed back so records join to the
-# anchor that asked.
+# 'Proposition') is injected into the domain's IN list; each record carries the stage it sits
+# at as `stageKey`, computed from its own stage pair — so one call answers several stages, where
+# an echoed key would have cost a call per stage.
 - name: leadsByStage
   kind: api
   operation: leadsSearchRead
   records: "$[*]"
   keyArg: "domain.0.2"
-  echoKeyAs: stageKey
   args:
     domain:
       - ["stage_id.name", "in", []]
@@ -42,20 +88,27 @@
       # IN-list — a 500. Until the engine drops falsy join keys, this door carries
       # only partnered leads; the trade is stated here rather than discovered.
       - ["partner_id", "!=", false]
-    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, company_currency]
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, date_last_stage_update, won_status, date_deadline, user_id, active, company_currency, type, priority]
     # No `load: ""`: a lead door is a PARTNER-DOOR shape (see the top of this file) — the
     # vocabulary wants the stage, salesperson and currency NAMES, which come only inside pairs.
-    limit: 200
+    order: "expected_revenue desc, id desc"
+    limit: 1000
   compute:
+    stageKey: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[1] END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
     partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
     email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
     stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
+    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE r.date_last_stage_update END"
+    won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
+    date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
+    type: "CASE r.type WHEN false THEN null ELSE r.type END"
     # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
     # says `pending` for open), amount is the deal value, closeOn the expected close while open
-    # and the day it was decided once won or lost. Odoo's own fields stay beside them.
+    # and the day it was decided once won or lost, probability a FRACTION. Odoo's own fields stay
+    # beside them — its percent as probabilityPercent.
     title: "r.name"
     # The vocabulary's names, lifted out of the pairs: the pipeline step in the CRM's own words,
     # the salesperson, and the company currency the amount is in.
@@ -65,14 +118,72 @@
     sourceUrl: "'http://localhost:8069/odoo/crm.lead/' + toString(r.id)"
     status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
     amount: "toFloat(r.expected_revenue)"
+    probabilityPercent: "toFloat(r.probability)"
+    probability: "toFloat(r.probability) / 100.0"
+    priorityLabel: "CASE r.priority WHEN '0' THEN 'low' WHEN '1' THEN 'medium' WHEN '2' THEN 'high' WHEN '3' THEN 'very_high' ELSE null END"
     closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
+  # Biggest first, and said so: a top-N by expected_revenue over this door is the first page.
+  orderedBy: [{ property: expected_revenue, descending: true }]
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: title, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: title, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: partner_id, op: EQUALS, argPath: "domain.-", clause: ["partner_id", "=", "{value}"] }
+    - { property: partner_id, op: IN, argPath: "domain.-", clause: ["partner_id", "in", "{values}"] }
+    - { property: stage, op: EQUALS, argPath: "domain.-", clause: ["stage_id.name", "=", "{value}"] }
+    - { property: stage, op: IN, argPath: "domain.-", clause: ["stage_id.name", "in", "{values}"] }
+    - { property: stage_id, op: EQUALS, argPath: "domain.-", clause: ["stage_id", "=", "{value}"] }
+    - { property: stage_id, op: IN, argPath: "domain.-", clause: ["stage_id", "in", "{values}"] }
+    - { property: won_status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "{value}"] }
+    - { property: won_status, op: IN, argPath: "domain.-", clause: ["won_status", "in", "{values}"] }
+    - { property: status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "{value}"], valuePattern: '^(won|lost)$' }
+    - { property: active, op: EQUALS, argPath: "domain.-", clause: ["active", "=", "{value}"] }
+    - { property: type, op: EQUALS, argPath: "domain.-", clause: ["type", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: email_from, op: EQUALS, argPath: "domain.-", clause: ["email_from", "=", "{value}"] }
+    - { property: email_from, op: CONTAINS, argPath: "domain.-", clause: ["email_from", "ilike", "{value}"], match: ci }
+    - { property: probabilityPercent, op: GREATER_THAN, argPath: "domain.-", clause: ["probability", ">", "{value}"] }
+    - { property: probabilityPercent, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", ">=", "{value}"] }
+    - { property: probabilityPercent, op: LESS_THAN, argPath: "domain.-", clause: ["probability", "<", "{value}"] }
+    - { property: probabilityPercent, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", "<=", "{value}"] }
+    - { property: expected_revenue, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
+    - { property: expected_revenue, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
+    - { property: expected_revenue, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
+    - { property: expected_revenue, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", "<=", "{value}"] }
+    - { property: amount, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
+    - { property: amount, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
+    - { property: amount, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
+    - { property: amount, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", "<=", "{value}"] }
+    - { property: create_date, op: GREATER_THAN, argPath: "domain.-", clause: ["create_date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: create_date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: create_date, op: LESS_THAN, argPath: "domain.-", clause: ["create_date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: create_date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: GREATER_THAN, argPath: "domain.-", clause: ["date_closed", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: LESS_THAN, argPath: "domain.-", clause: ["date_closed", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_deadline, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
   # Paged like the book's other doors: one stage can hold more than a page —
   # and an unpaged door truncates at the limit, which a ranked view then refuses as INCOMPLETE.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 250 }
-  cache: { kind: ttl, seconds: 300 }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  maxKeysPerCall: 200
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
-# Customers by id — resolves a lead's partner_id (bare id, thanks to load:"") to the partner
-# record. Batch IN, one call for a whole traversal.
+# Customers by id — the key-addressed door: a lead's partner_id, a meeting's attendees, a
+# company's parent, an activity's partner. Batch IN, one call for a whole traversal.
 - name: customersById
   kind: api
   # Odoo domain values are TYPED: partner_id in ["9"] matches nothing, silently.
@@ -85,15 +196,14 @@
       - ["id", "in", []]
     # website rides along for the Diffbot bridge (types/diffbot.yml): a domain
     # identifies a company and a name does not, and website is Odoo's own field.
-    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, commercial_partner_id, industry_id, user_id, customer_rank, supplier_rank]
     # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
-    # NO paging, and that is safe HERE for a reason worth writing down: this is a
-    # lookup BY ID, so a chunk of `maxKeysPerCall` (50) keys returns at most 50
-    # records — never near this limit. The sibling by-partner producers batch the
-    # same way but are TO-MANY, where one prolific partner fills the response and
-    # starves the rest of the chunk, so those page. An audit that flags a batched
-    # producer with a flat limit is right to; this is the exception, not an oversight.
+    # NO paging, and that is safe HERE for a reason worth writing down: this is a lookup BY ID,
+    # so a chunk of `maxKeysPerCall` keys returns at most that many records — and the limit
+    # equals it. The sibling by-partner producers are TO-MANY, where one prolific partner fills
+    # the response and starves the rest of the chunk, so those page.
     limit: 200
+  maxKeysPerCall: 200
   compute:
     email: "CASE r.email WHEN false THEN null ELSE r.email END"
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
@@ -109,10 +219,41 @@
     sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
     parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
     parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
-  cache: { kind: ttl, seconds: 300 }
+    commercialPartnerId: "CASE r.commercial_partner_id WHEN false THEN null ELSE r.commercial_partner_id[0] END"
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci }
+    - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
+    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
+    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci }
+    - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci }
+    - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
+    - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
+    - { property: country_id, op: EQUALS, argPath: "domain.-", clause: ["country_id", "=", "{value}"] }
+    - { property: country_id, op: IN, argPath: "domain.-", clause: ["country_id", "in", "{values}"] }
+    - { property: country, op: EQUALS, argPath: "domain.-", clause: ["country_id.name", "=", "{value}"] }
+    - { property: industry_id, op: EQUALS, argPath: "domain.-", clause: ["industry_id", "=", "{value}"] }
+    - { property: industry_id, op: IN, argPath: "domain.-", clause: ["industry_id", "in", "{values}"] }
+    - { property: industry, op: EQUALS, argPath: "domain.-", clause: ["industry_id.name", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: parent_id, op: EQUALS, argPath: "domain.-", clause: ["parent_id", "=", "{value}"] }
+    - { property: parent_id, op: IN, argPath: "domain.-", clause: ["parent_id", "in", "{values}"] }
+    - { property: relationship, op: EQUALS, argPath: "domain.-", clause: ["customer_rank", ">", 0], valuePattern: '^(customer)$' }
+  cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
 
 # A customer's UNPAID posted customer invoices. Keyed on partner_id; the not_paid/partial
 # filter is the producer's judgment call and is stated here, where a reviewer can see it.
+# Batched: each invoice carries the partner it is made out to, and `partner_id in [...]` returns
+# only invoices whose partner is one of the keys, so `partnerKey` is computed from the record
+# rather than echoed — an echo would have cost one call per customer.
 - name: unpaidInvoicesByPartner
   kind: api
   # Odoo domain values are TYPED: partner_id in ["9"] matches nothing, silently.
@@ -120,26 +261,60 @@
   operation: invoicesSearchRead
   records: "$[*]"
   keyArg: "domain.0.2"
-  # The echoed key, not the raw partner_id, is what joins attribute on — the same
-  # "echo kept for join safety" every shipped API realm relies on.
-  echoKeyAs: partnerKey
   args:
     domain:
       - ["partner_id", "in", []]
       - ["move_type", "=", "out_invoice"]
       - ["state", "=", "posted"]
       - ["payment_state", "in", ["not_paid", "partial"]]
-    fields: [name, partner_id, amount_total, amount_residual, invoice_date_due, payment_state]
-    load: ""
-    limit: 200
+    fields: [name, partner_id, amount_total, amount_residual, invoice_date, invoice_date_due, payment_state, currency_id]
+    # No `load: ""`: the currency's code comes only inside its pair (see the top of this file).
+    order: "amount_residual desc, id desc"
+    limit: 1000
   compute:
-    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
+    partnerKey: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
+    invoice_date: "CASE r.invoice_date WHEN false THEN null ELSE r.invoice_date END"
     invoice_date_due: "CASE r.invoice_date_due WHEN false THEN null ELSE r.invoice_date_due END"
     payment_state: "CASE r.payment_state WHEN false THEN null ELSE r.payment_state END"
-  cache: { kind: ttl, seconds: 300 }
+    currency_id: "CASE r.currency_id WHEN false THEN null ELSE r.currency_id[0] END"
+    currency: "CASE r.currency_id WHEN false THEN null ELSE r.currency_id[1] END"
+    sourceUrl: "'http://localhost:8069/odoo/account.move/' + toString(r.id)"
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: partner_id, op: EQUALS, argPath: "domain.-", clause: ["partner_id", "=", "{value}"] }
+    - { property: partner_id, op: IN, argPath: "domain.-", clause: ["partner_id", "in", "{values}"] }
+    - { property: payment_state, op: EQUALS, argPath: "domain.-", clause: ["payment_state", "=", "{value}"] }
+    - { property: payment_state, op: IN, argPath: "domain.-", clause: ["payment_state", "in", "{values}"] }
+    - { property: currency, op: EQUALS, argPath: "domain.-", clause: ["currency_id.name", "=", "{value}"] }
+    - { property: amount_total, op: GREATER_THAN, argPath: "domain.-", clause: ["amount_total", ">", "{value}"] }
+    - { property: amount_total, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_total", ">=", "{value}"] }
+    - { property: amount_total, op: LESS_THAN, argPath: "domain.-", clause: ["amount_total", "<", "{value}"] }
+    - { property: amount_total, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_total", "<=", "{value}"] }
+    - { property: amount_residual, op: GREATER_THAN, argPath: "domain.-", clause: ["amount_residual", ">", "{value}"] }
+    - { property: amount_residual, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_residual", ">=", "{value}"] }
+    - { property: amount_residual, op: LESS_THAN, argPath: "domain.-", clause: ["amount_residual", "<", "{value}"] }
+    - { property: amount_residual, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_residual", "<=", "{value}"] }
+    - { property: invoice_date, op: GREATER_THAN, argPath: "domain.-", clause: ["invoice_date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date, op: LESS_THAN, argPath: "domain.-", clause: ["invoice_date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date_due, op: GREATER_THAN, argPath: "domain.-", clause: ["invoice_date_due", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date_due, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date_due", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date_due, op: LESS_THAN, argPath: "domain.-", clause: ["invoice_date_due", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date_due, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date_due", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+  # BATCHED AND TO-MANY: `limit` bounds the WHOLE response, not each key, so the chunk is paged
+  # out in full; Odoo pages by absolute offset.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  maxKeysPerCall: 200
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 # A customer's sales orders, any state — the state field rides on the record so a query can
-# filter for quotations that stalled versus orders in flight.
+# filter for quotations that stalled versus orders in flight. Batched for the same reason as
+# unpaidInvoicesByPartner.
 - name: ordersByPartner
   kind: api
   # Odoo domain values are TYPED: partner_id in ["9"] matches nothing, silently.
@@ -147,23 +322,48 @@
   operation: ordersSearchRead
   records: "$[*]"
   keyArg: "domain.0.2"
-  echoKeyAs: partnerKey
   args:
     domain:
       - ["partner_id", "in", []]
-    fields: [name, partner_id, amount_total, state, date_order]
-    load: ""
-    limit: 200
+    fields: [name, partner_id, amount_total, state, date_order, currency_id]
+    # No `load: ""`: the currency's code comes only inside its pair.
+    order: "date_order desc, id desc"
+    limit: 1000
   compute:
-    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
+    partnerKey: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
     state: "CASE r.state WHEN false THEN null ELSE r.state END"
     date_order: "CASE r.date_order WHEN false THEN null ELSE r.date_order END"
-  cache: { kind: ttl, seconds: 300 }
+    currency: "CASE r.currency_id WHEN false THEN null ELSE r.currency_id[1] END"
+    sourceUrl: "'http://localhost:8069/odoo/sale.order/' + toString(r.id)"
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: state, op: EQUALS, argPath: "domain.-", clause: ["state", "=", "{value}"] }
+    - { property: state, op: IN, argPath: "domain.-", clause: ["state", "in", "{values}"] }
+    - { property: amount_total, op: GREATER_THAN, argPath: "domain.-", clause: ["amount_total", ">", "{value}"] }
+    - { property: amount_total, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_total", ">=", "{value}"] }
+    - { property: amount_total, op: LESS_THAN, argPath: "domain.-", clause: ["amount_total", "<", "{value}"] }
+    - { property: amount_total, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_total", "<=", "{value}"] }
+    - { property: date_order, op: GREATER_THAN, argPath: "domain.-", clause: ["date_order", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date_order, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_order", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_order, op: LESS_THAN, argPath: "domain.-", clause: ["date_order", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_order, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_order", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  maxKeysPerCall: 200
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 # ── The book doors: fetch-all producers behind the OdooBook anchor, so questions about
 # the SETS ("how many customers", "who owes most") need no stage literal nobody can know.
 # The anchor key rides in Odoo's free-form context kwarg — the only safe slot, since JSON-2
 # binds kwargs against the method signature and rejects strangers.
+#
+# Odoo pages by absolute OFFSET, not page number: `limit` is the page size and `offset` skips
+# records already read. Without paging a door made one call and returned `limit` rows —
+# indistinguishable from a book that small, which is how 500 of 1,344 customers was once reported
+# as an exact figure. maxPages bounds the walk; hitting it warns. A page is 1,000 records: Odoo's
+# cost is per record, not per call, so a bigger page is fewer round trips and no slower.
 
 - name: customersAll
   kind: api
@@ -175,9 +375,9 @@
     domain:
       - ["customer_rank", ">", 0]
     # website rides along for the Diffbot bridge — see customersById.
-    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, commercial_partner_id, industry_id, user_id, customer_rank, supplier_rank]
     # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
-    limit: 200
+    limit: 1000
   compute:
     email: "CASE r.email WHEN false THEN null ELSE r.email END"
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
@@ -193,42 +393,42 @@
     sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
     parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
     parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
-  # WHAT THE SOURCE ABSORBS DECIDES WHAT THE QUESTION COSTS. An Odoo domain is a list of
-  # triples ANDed together, so `domain.-` appends one conjunct and no `linkPrevious` is needed.
-  #
+    commercialPartnerId: "CASE r.commercial_partner_id WHEN false THEN null ELSE r.commercial_partner_id[0] END"
   # Declaring these buys two different things, and the second is the one that is easy to miss:
   #
   #   1. the source filters, so the walk is over matching rows instead of the whole book;
-  #   2. the engine may ask for a COUNT instead of the records at all. Aggregate pushdown
-  #      refuses on ANY residual predicate — what the source will not apply, the graph must,
-  #      and a number cannot be filtered after the fact. So an undeclared filter does not just
-  #      cost a broader fetch; it makes "how many" unanswerable except by reading every row.
+  #   2. a `LIMIT` can be pushed and a hop bounded, because nothing is left for the graph to drop.
   #
-  # Every property below is the name the QUERY writes, which here is also Odoo's own field name
-  # because this realm declares no `project:`. The third element is a whole-node `{value}`, so
-  # a number reaches Odoo as a number rather than as its digits in quotes.
+  # A single company by name or id is therefore ONE call, whatever the size of the book.
   pushdown:
-    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
-    # Odoo's `ilike` is already substring-and-case-insensitive; it wraps the value itself.
-    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
-    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
-    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
-    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"] }
-    - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
-    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
-    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"] }
-    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"] }
-    - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
-    - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
-    - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
     - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
     - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
-  # Odoo pages by absolute OFFSET, not page number: `limit` is the page size and `offset`
-  # skips records already read. Without this the door made one call and returned `limit`
-  # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
-  # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 250 }
-  cache: { kind: ttl, seconds: 300 }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci }
+    - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
+    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
+    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci }
+    - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci }
+    - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
+    - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
+    - { property: country_id, op: EQUALS, argPath: "domain.-", clause: ["country_id", "=", "{value}"] }
+    - { property: country_id, op: IN, argPath: "domain.-", clause: ["country_id", "in", "{values}"] }
+    - { property: country, op: EQUALS, argPath: "domain.-", clause: ["country_id.name", "=", "{value}"] }
+    - { property: industry_id, op: EQUALS, argPath: "domain.-", clause: ["industry_id", "=", "{value}"] }
+    - { property: industry_id, op: IN, argPath: "domain.-", clause: ["industry_id", "in", "{values}"] }
+    - { property: industry, op: EQUALS, argPath: "domain.-", clause: ["industry_id.name", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: parent_id, op: EQUALS, argPath: "domain.-", clause: ["parent_id", "=", "{value}"] }
+    - { property: parent_id, op: IN, argPath: "domain.-", clause: ["parent_id", "in", "{values}"] }
+    - { property: relationship, op: EQUALS, argPath: "domain.-", clause: ["customer_rank", ">", 0], valuePattern: '^(customer)$' }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
 
 - name: invoicesUnpaidAll
   kind: api
@@ -241,21 +441,34 @@
       - ["move_type", "=", "out_invoice"]
       - ["state", "=", "posted"]
       - ["payment_state", "in", ["not_paid", "partial"]]
-    fields: [name, partner_id, amount_total, amount_residual, invoice_date_due, payment_state]
-    load: ""
-    limit: 200
+    fields: [name, partner_id, amount_total, amount_residual, invoice_date, invoice_date_due, payment_state, currency_id]
+    # No `load: ""`: the currency's code comes only inside its pair.
+    order: "amount_residual desc, id desc"
+    limit: 1000
   compute:
-    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id END"
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
+    partnerKey: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
+    invoice_date: "CASE r.invoice_date WHEN false THEN null ELSE r.invoice_date END"
     invoice_date_due: "CASE r.invoice_date_due WHEN false THEN null ELSE r.invoice_date_due END"
     payment_state: "CASE r.payment_state WHEN false THEN null ELSE r.payment_state END"
-  # See customersAll. The money and due-date filters are the ones the receivables views actually
-  # write, and they were the ones most expensive to leave graph-side: "everything owing over X"
-  # read every unpaid invoice in the book to drop most of them afterwards.
+    currency_id: "CASE r.currency_id WHEN false THEN null ELSE r.currency_id[0] END"
+    currency: "CASE r.currency_id WHEN false THEN null ELSE r.currency_id[1] END"
+    sourceUrl: "'http://localhost:8069/odoo/account.move/' + toString(r.id)"
+  # Largest debt first, and said so: "the 10 biggest outstanding invoices" is the first page.
+  orderedBy: [{ property: amount_residual, descending: true }]
+  # The money and due-date filters are the ones the receivables views actually write, and they
+  # were the most expensive to leave graph-side: "everything owing over X" read every unpaid
+  # invoice in the book to drop most of them afterwards.
   pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
     - { property: partner_id, op: EQUALS, argPath: "domain.-", clause: ["partner_id", "=", "{value}"] }
     - { property: partner_id, op: IN, argPath: "domain.-", clause: ["partner_id", "in", "{values}"] }
     - { property: payment_state, op: EQUALS, argPath: "domain.-", clause: ["payment_state", "=", "{value}"] }
     - { property: payment_state, op: IN, argPath: "domain.-", clause: ["payment_state", "in", "{values}"] }
+    - { property: currency, op: EQUALS, argPath: "domain.-", clause: ["currency_id.name", "=", "{value}"] }
     - { property: amount_total, op: GREATER_THAN, argPath: "domain.-", clause: ["amount_total", ">", "{value}"] }
     - { property: amount_total, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_total", ">=", "{value}"] }
     - { property: amount_total, op: LESS_THAN, argPath: "domain.-", clause: ["amount_total", "<", "{value}"] }
@@ -264,16 +477,16 @@
     - { property: amount_residual, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_residual", ">=", "{value}"] }
     - { property: amount_residual, op: LESS_THAN, argPath: "domain.-", clause: ["amount_residual", "<", "{value}"] }
     - { property: amount_residual, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_residual", "<=", "{value}"] }
-    - { property: invoice_date_due, op: GREATER_THAN, argPath: "domain.-", clause: ["invoice_date_due", ">", "{value}"] }
-    - { property: invoice_date_due, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date_due", ">=", "{value}"] }
-    - { property: invoice_date_due, op: LESS_THAN, argPath: "domain.-", clause: ["invoice_date_due", "<", "{value}"] }
-    - { property: invoice_date_due, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date_due", "<=", "{value}"] }
-  # Odoo pages by absolute OFFSET, not page number: `limit` is the page size and `offset`
-  # skips records already read. Without this the door made one call and returned `limit`
-  # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
-  # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 250 }
-  cache: { kind: ttl, seconds: 300 }
+    - { property: invoice_date, op: GREATER_THAN, argPath: "domain.-", clause: ["invoice_date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date, op: LESS_THAN, argPath: "domain.-", clause: ["invoice_date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date_due, op: GREATER_THAN, argPath: "domain.-", clause: ["invoice_date_due", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date_due, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date_due", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date_due, op: LESS_THAN, argPath: "domain.-", clause: ["invoice_date_due", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: invoice_date_due, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date_due", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 - name: leadsOpenAll
   kind: api
@@ -288,65 +501,90 @@
       # Partnerless leads excluded here for the same falsy-key reason as leadsByStage:
       # their partner_id is FALSE, and false inside a downstream integer batch breaks it.
       - ["partner_id", "!=", false]
-    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, won_status, date_deadline, date_closed, user_id, company_currency]
-    # No `load: ""`: a lead door is a PARTNER-DOOR shape (see the top of this file) — the
-    # vocabulary wants the stage, salesperson and currency NAMES, which come only inside pairs.
-    limit: 200
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, date_last_stage_update, won_status, date_deadline, user_id, active, company_currency, type, priority]
+    # No `load: ""`: a lead door is a PARTNER-DOOR shape (see the top of this file).
+    order: "expected_revenue desc, id desc"
+    limit: 1000
   compute:
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
     partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
     email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
     stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
-    # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
-    # says `pending` for open), amount is the deal value, closeOn the expected close while open
-    # and the day it was decided once won or lost. Odoo's own fields stay beside them.
+    date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
+    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE r.date_last_stage_update END"
+    won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
+    date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
+    type: "CASE r.type WHEN false THEN null ELSE r.type END"
+    # The vocabulary's Opportunity — see leadsByStage.
     title: "r.name"
-    # The vocabulary's names, lifted out of the pairs: the pipeline step in the CRM's own words,
-    # the salesperson, and the company currency the amount is in.
     stage: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[1] END"
     ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
     currency: "CASE r.company_currency WHEN false THEN null ELSE r.company_currency[1] END"
     sourceUrl: "'http://localhost:8069/odoo/crm.lead/' + toString(r.id)"
     status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
     amount: "toFloat(r.expected_revenue)"
+    probabilityPercent: "toFloat(r.probability)"
+    probability: "toFloat(r.probability) / 100.0"
+    priorityLabel: "CASE r.priority WHEN '0' THEN 'low' WHEN '1' THEN 'medium' WHEN '2' THEN 'high' WHEN '3' THEN 'very_high' ELSE null END"
     closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
-  # See customersAll for why these are declared. `load: ""` means the many2one fields come back
-  # as bare ids, so `stage_id` and `partner_id` compare against NUMBERS here, not stage names —
-  # which is exactly what the typed `{value}` slot makes expressible.
+  # Biggest first: the triage view's top 50 and the pipeline view's top 100 are the first page.
+  orderedBy: [{ property: expected_revenue, descending: true }]
   pushdown:
-    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
     - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
-    - { property: email_from, op: EQUALS, argPath: "domain.-", clause: ["email_from", "=", "{value}"] }
-    - { property: email_from, op: CONTAINS, argPath: "domain.-", clause: ["email_from", "ilike", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: title, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: title, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
     - { property: partner_id, op: EQUALS, argPath: "domain.-", clause: ["partner_id", "=", "{value}"] }
     - { property: partner_id, op: IN, argPath: "domain.-", clause: ["partner_id", "in", "{values}"] }
+    - { property: stage, op: EQUALS, argPath: "domain.-", clause: ["stage_id.name", "=", "{value}"] }
+    - { property: stage, op: IN, argPath: "domain.-", clause: ["stage_id.name", "in", "{values}"] }
     - { property: stage_id, op: EQUALS, argPath: "domain.-", clause: ["stage_id", "=", "{value}"] }
     - { property: stage_id, op: IN, argPath: "domain.-", clause: ["stage_id", "in", "{values}"] }
-    - { property: probability, op: GREATER_THAN, argPath: "domain.-", clause: ["probability", ">", "{value}"] }
-    - { property: probability, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", ">=", "{value}"] }
-    - { property: probability, op: LESS_THAN, argPath: "domain.-", clause: ["probability", "<", "{value}"] }
-    - { property: probability, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", "<=", "{value}"] }
+    - { property: won_status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "{value}"] }
+    - { property: won_status, op: IN, argPath: "domain.-", clause: ["won_status", "in", "{values}"] }
+    - { property: status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "pending"], valuePattern: '^(open)$' }
+    - { property: active, op: EQUALS, argPath: "domain.-", clause: ["active", "=", "{value}"] }
+    - { property: type, op: EQUALS, argPath: "domain.-", clause: ["type", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: email_from, op: EQUALS, argPath: "domain.-", clause: ["email_from", "=", "{value}"] }
+    - { property: email_from, op: CONTAINS, argPath: "domain.-", clause: ["email_from", "ilike", "{value}"], match: ci }
+    - { property: probabilityPercent, op: GREATER_THAN, argPath: "domain.-", clause: ["probability", ">", "{value}"] }
+    - { property: probabilityPercent, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", ">=", "{value}"] }
+    - { property: probabilityPercent, op: LESS_THAN, argPath: "domain.-", clause: ["probability", "<", "{value}"] }
+    - { property: probabilityPercent, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", "<=", "{value}"] }
     - { property: expected_revenue, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
     - { property: expected_revenue, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
     - { property: expected_revenue, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
     - { property: expected_revenue, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", "<=", "{value}"] }
-    # Odoo compares datetimes against 'YYYY-MM-DD[ HH:MM:SS]' strings, so these stay strings.
-    - { property: create_date, op: GREATER_THAN, argPath: "domain.-", clause: ["create_date", ">", "{value}"] }
-    - { property: create_date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", ">=", "{value}"] }
-    - { property: create_date, op: LESS_THAN, argPath: "domain.-", clause: ["create_date", "<", "{value}"] }
-    - { property: create_date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", "<=", "{value}"] }
-  # Odoo pages by absolute OFFSET, not page number: `limit` is the page size and `offset`
-  # skips records already read. Without this the door made one call and returned `limit`
-  # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
-  # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 250 }
-  cache: { kind: ttl, seconds: 300 }
+    - { property: amount, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
+    - { property: amount, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
+    - { property: amount, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
+    - { property: amount, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", "<=", "{value}"] }
+    - { property: create_date, op: GREATER_THAN, argPath: "domain.-", clause: ["create_date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: create_date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: create_date, op: LESS_THAN, argPath: "domain.-", clause: ["create_date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: create_date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: GREATER_THAN, argPath: "domain.-", clause: ["date_closed", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: LESS_THAN, argPath: "domain.-", clause: ["date_closed", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_deadline, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
-# A lead's chatter — the emails and comments on the opportunity, which is where the actual
-# state of a deal lives (the stage field says Proposition; the thread says the customer has
-# gone quiet). Comments and emails only: tracking notes ("Stage changed") are noise to a
-# reader and poison to a sentiment judge.
 # EVERY opportunity on the book — open, won and lost. The sibling `leadsOpenAll` is the
 # PIPELINE door and filters to what is still in play; at 2,000 deals it sees 1,200, so a
 # per-account question that wants won/lost counts cannot be answered through it. Verified
@@ -369,9 +607,8 @@
       - ["active", "=", false]
       # Partnerless leads excluded for the same falsy-key reason as leadsByStage.
       - ["partner_id", "!=", false]
-    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active, company_currency]
-    # No `load: ""`: a lead door is a PARTNER-DOOR shape (see the top of this file) — the
-    # vocabulary wants the stage, salesperson and currency NAMES, which come only inside pairs.
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, date_last_stage_update, won_status, date_deadline, user_id, active, company_currency, type, priority]
+    # No `load: ""`: a lead door is a PARTNER-DOOR shape (see the top of this file).
     limit: 1000
   compute:
     partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
@@ -379,51 +616,202 @@
     stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
+    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE r.date_last_stage_update END"
     won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
-    # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
-    # says `pending` for open), amount is the deal value, closeOn the expected close while open
-    # and the day it was decided once won or lost. Odoo's own fields stay beside them.
+    type: "CASE r.type WHEN false THEN null ELSE r.type END"
+    # The vocabulary's Opportunity — see leadsByStage.
     title: "r.name"
-    # The vocabulary's names, lifted out of the pairs: the pipeline step in the CRM's own words,
-    # the salesperson, and the company currency the amount is in.
     stage: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[1] END"
     ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
     currency: "CASE r.company_currency WHEN false THEN null ELSE r.company_currency[1] END"
     sourceUrl: "'http://localhost:8069/odoo/crm.lead/' + toString(r.id)"
     status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
     amount: "toFloat(r.expected_revenue)"
+    probabilityPercent: "toFloat(r.probability)"
+    probability: "toFloat(r.probability) / 100.0"
+    priorityLabel: "CASE r.priority WHEN '0' THEN 'low' WHEN '1' THEN 'medium' WHEN '2' THEN 'high' WHEN '3' THEN 'very_high' ELSE null END"
     closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
   # 1,000 a page: the book's 2,000 leads are three round trips, not eleven. It does NOT make the
   # sweep faster — measured 2026-09-23 it is ~10 s either way, because Odoo's search_read cost is
   # per record (the fields list, partner_id resolution), not per call. Fewer calls is all it buys.
   paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
-  # See customersAll for why these are declared: the source filters, and an absorbed
-  # predicate is what lets a count be pushed instead of the records walked.
+  # Every filter a deal question writes — status, stage, owner, window — narrows the read here.
   pushdown:
-    - { property: won_status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "{value}"] }
-    - { property: won_status, op: IN, argPath: "domain.-", clause: ["won_status", "in", "{values}"] }
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: title, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: title, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
     - { property: partner_id, op: EQUALS, argPath: "domain.-", clause: ["partner_id", "=", "{value}"] }
     - { property: partner_id, op: IN, argPath: "domain.-", clause: ["partner_id", "in", "{values}"] }
+    - { property: stage, op: EQUALS, argPath: "domain.-", clause: ["stage_id.name", "=", "{value}"] }
+    - { property: stage, op: IN, argPath: "domain.-", clause: ["stage_id.name", "in", "{values}"] }
     - { property: stage_id, op: EQUALS, argPath: "domain.-", clause: ["stage_id", "=", "{value}"] }
     - { property: stage_id, op: IN, argPath: "domain.-", clause: ["stage_id", "in", "{values}"] }
-    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
+    - { property: won_status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "{value}"] }
+    - { property: won_status, op: IN, argPath: "domain.-", clause: ["won_status", "in", "{values}"] }
+    - { property: status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "{value}"], valuePattern: '^(won|lost)$' }
+    - { property: active, op: EQUALS, argPath: "domain.-", clause: ["active", "=", "{value}"] }
+    - { property: type, op: EQUALS, argPath: "domain.-", clause: ["type", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: email_from, op: EQUALS, argPath: "domain.-", clause: ["email_from", "=", "{value}"] }
+    - { property: email_from, op: CONTAINS, argPath: "domain.-", clause: ["email_from", "ilike", "{value}"], match: ci }
+    - { property: probabilityPercent, op: GREATER_THAN, argPath: "domain.-", clause: ["probability", ">", "{value}"] }
+    - { property: probabilityPercent, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", ">=", "{value}"] }
+    - { property: probabilityPercent, op: LESS_THAN, argPath: "domain.-", clause: ["probability", "<", "{value}"] }
+    - { property: probabilityPercent, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", "<=", "{value}"] }
     - { property: expected_revenue, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
     - { property: expected_revenue, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
     - { property: expected_revenue, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
-    - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"] }
-    - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"] }
-  cache: { kind: ttl, seconds: 300 }
+    - { property: expected_revenue, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", "<=", "{value}"] }
+    - { property: amount, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
+    - { property: amount, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
+    - { property: amount, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
+    - { property: amount, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", "<=", "{value}"] }
+    - { property: create_date, op: GREATER_THAN, argPath: "domain.-", clause: ["create_date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: create_date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: create_date, op: LESS_THAN, argPath: "domain.-", clause: ["create_date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: create_date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: GREATER_THAN, argPath: "domain.-", clause: ["date_closed", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: LESS_THAN, argPath: "domain.-", clause: ["date_closed", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_deadline, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
+# THE DECIDED DEALS — won or lost, archived or not. A decided deal almost never changes again,
+# so this door holds its read for an hour where the pipeline doors hold theirs for five minutes,
+# and the wins and losses questions ("biggest win this quarter", "what did we lose to") read it
+# instead of re-reading the whole book. Reopening a deal in Odoo moves it back to the pipeline;
+# this door sees that within the hour.
+#
+# Only here is `closeOn` the day of `date_closed` on EVERY record, so only here can a window on
+# closeOn be pushed as a window on date_closed — exactly, to the second.
+- name: leadsDecidedAll
+  kind: api
+  operation: leadsSearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    domain:
+      - "|"
+      - ["active", "=", true]
+      - ["active", "=", false]
+      - ["won_status", "in", ["won", "lost"]]
+      # Partnerless leads excluded for the same falsy-key reason as leadsByStage.
+      - ["partner_id", "!=", false]
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, date_last_stage_update, won_status, date_deadline, user_id, active, company_currency, type, priority, lost_reason_id]
+    order: "date_closed desc, id desc"
+    limit: 1000
+  compute:
+    partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
+    email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
+    stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
+    create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
+    date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
+    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE r.date_last_stage_update END"
+    won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
+    date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
+    type: "CASE r.type WHEN false THEN null ELSE r.type END"
+    lostReason: "CASE r.lost_reason_id WHEN false THEN null ELSE r.lost_reason_id[1] END"
+    # The vocabulary's Opportunity — see leadsByStage.
+    title: "r.name"
+    stage: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    currency: "CASE r.company_currency WHEN false THEN null ELSE r.company_currency[1] END"
+    sourceUrl: "'http://localhost:8069/odoo/crm.lead/' + toString(r.id)"
+    status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
+    amount: "toFloat(r.expected_revenue)"
+    probabilityPercent: "toFloat(r.probability)"
+    probability: "toFloat(r.probability) / 100.0"
+    priorityLabel: "CASE r.priority WHEN '0' THEN 'low' WHEN '1' THEN 'medium' WHEN '2' THEN 'high' WHEN '3' THEN 'very_high' ELSE null END"
+    closeOn: "CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END"
+  orderedBy: [{ property: date_closed, descending: true }]
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: title, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: title, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: partner_id, op: EQUALS, argPath: "domain.-", clause: ["partner_id", "=", "{value}"] }
+    - { property: partner_id, op: IN, argPath: "domain.-", clause: ["partner_id", "in", "{values}"] }
+    - { property: stage, op: EQUALS, argPath: "domain.-", clause: ["stage_id.name", "=", "{value}"] }
+    - { property: stage, op: IN, argPath: "domain.-", clause: ["stage_id.name", "in", "{values}"] }
+    - { property: stage_id, op: EQUALS, argPath: "domain.-", clause: ["stage_id", "=", "{value}"] }
+    - { property: stage_id, op: IN, argPath: "domain.-", clause: ["stage_id", "in", "{values}"] }
+    - { property: won_status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "{value}"] }
+    - { property: won_status, op: IN, argPath: "domain.-", clause: ["won_status", "in", "{values}"] }
+    - { property: status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "{value}"], valuePattern: '^(won|lost)$' }
+    - { property: active, op: EQUALS, argPath: "domain.-", clause: ["active", "=", "{value}"] }
+    - { property: type, op: EQUALS, argPath: "domain.-", clause: ["type", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: email_from, op: EQUALS, argPath: "domain.-", clause: ["email_from", "=", "{value}"] }
+    - { property: email_from, op: CONTAINS, argPath: "domain.-", clause: ["email_from", "ilike", "{value}"], match: ci }
+    - { property: probabilityPercent, op: GREATER_THAN, argPath: "domain.-", clause: ["probability", ">", "{value}"] }
+    - { property: probabilityPercent, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", ">=", "{value}"] }
+    - { property: probabilityPercent, op: LESS_THAN, argPath: "domain.-", clause: ["probability", "<", "{value}"] }
+    - { property: probabilityPercent, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", "<=", "{value}"] }
+    - { property: expected_revenue, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
+    - { property: expected_revenue, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
+    - { property: expected_revenue, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
+    - { property: expected_revenue, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", "<=", "{value}"] }
+    - { property: amount, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
+    - { property: amount, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
+    - { property: amount, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
+    - { property: amount, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", "<=", "{value}"] }
+    - { property: create_date, op: GREATER_THAN, argPath: "domain.-", clause: ["create_date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: create_date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: create_date, op: LESS_THAN, argPath: "domain.-", clause: ["create_date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: create_date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: GREATER_THAN, argPath: "domain.-", clause: ["date_closed", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: LESS_THAN, argPath: "domain.-", clause: ["date_closed", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_deadline, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: closeOn, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: closeOn, op: LESS_THAN, argPath: "domain.-", clause: ["date_closed", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: closeOn, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value} 23:59:59"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: closeOn, op: GREATER_THAN, argPath: "domain.-", clause: ["date_closed", ">", "{value} 23:59:59"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  cache: { kind: ttl, seconds: 3600, negativeTtlSeconds: 3600 }
 
+# A lead's chatter — the emails and comments on the opportunity, which is where the actual
+# state of a deal lives (the stage field says Proposition; the thread says the customer has
+# gone quiet). Comments and emails only: tracking notes ("Stage changed") are noise to a
+# reader and poison to a sentiment judge. Batched: every message carries the deal it is on as
+# `res_id`, so `leadKey` is computed from it — an echo cost one call per deal, fifty for triage.
 - name: messagesByLead
   kind: api
   keyType: int
   operation: messagesSearchRead
   records: "$[*]"
   keyArg: "domain.1.2"
-  echoKeyAs: leadKey
   args:
     domain:
       - ["model", "=", "crm.lead"]
@@ -431,16 +819,39 @@
       - ["message_type", "in", ["comment", "email"]]
     fields: [res_id, body, date, author_id, subject, message_type]
     # No `load: ""`: author_id is this door's only many2one, and its pair is where the author's NAME is.
-    limit: 200
+    order: "date desc, id desc"
+    limit: 1000
   compute:
+    leadKey: "r.res_id"
     body: "CASE r.body WHEN false THEN null ELSE r.body END"
     date: "CASE r.date WHEN false THEN null ELSE r.date END"
     author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id[0] END"
     authorName: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
+    author: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
     subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
     message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
+    model: "'crm.lead'"
+    about: "'opportunity'"
     # The vocabulary's AccountNote.writtenOn: the day, from Odoo's UTC timestamp.
     writtenOn: "CASE r.date WHEN false THEN null ELSE substring(r.date, 0, 10) END"
+    sourceUrl: "'http://localhost:8069/odoo/crm.lead/' + toString(r.res_id)"
+  pushdown:
+    - { property: message_type, op: EQUALS, argPath: "domain.-", clause: ["message_type", "=", "{value}"] }
+    - { property: message_type, op: IN, argPath: "domain.-", clause: ["message_type", "in", "{values}"] }
+    - { property: author_id, op: EQUALS, argPath: "domain.-", clause: ["author_id", "=", "{value}"] }
+    - { property: author_id, op: IN, argPath: "domain.-", clause: ["author_id", "in", "{values}"] }
+    - { property: authorName, op: EQUALS, argPath: "domain.-", clause: ["author_id.name", "=", "{value}"] }
+    - { property: date, op: GREATER_THAN, argPath: "domain.-", clause: ["date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: writtenOn, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: writtenOn, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: writtenOn, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value} 23:59:59"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+  # BATCHED AND TO-MANY — paged so a talkative deal cannot starve the others in its chunk.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  maxKeysPerCall: 200
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 # ── The preparation surface: meetings and scheduled next-actions, behind the book door
 # like every other set. This is data Odoo shows one record at a time; the point of having
@@ -456,21 +867,40 @@
     domain: []
     # partner_ids is the attendee list — a many2many, so it arrives as an id LIST even
     # under load:"" — which is exactly what the per-element MEETING_WITH join wants.
-    fields: [name, start, stop, location, description, partner_ids]
+    fields: [name, start, stop, allday, location, description, partner_ids, user_id]
     load: ""
-    limit: 200
+    order: "start asc, id asc"
+    limit: 1000
   compute:
     start: "CASE r.start WHEN false THEN null ELSE r.start END"
     stop: "CASE r.stop WHEN false THEN null ELSE r.stop END"
     location: "CASE r.location WHEN false THEN null ELSE r.location END"
     description: "CASE r.description WHEN false THEN null ELSE r.description END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id END"
     # The vocabulary's Meeting.
     title: "r.name"
     startsOn: "CASE r.start WHEN false THEN null ELSE substring(r.start, 0, 10) END"
+    sourceUrl: "'http://localhost:8069/odoo/calendar.event/' + toString(r.id)"
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: start, op: GREATER_THAN, argPath: "domain.-", clause: ["start", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: start, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["start", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: start, op: LESS_THAN, argPath: "domain.-", clause: ["start", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: start, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["start", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: stop, op: GREATER_THAN, argPath: "domain.-", clause: ["stop", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: stop, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["stop", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: stop, op: LESS_THAN, argPath: "domain.-", clause: ["stop", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: stop, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["stop", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: startsOn, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["start", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: startsOn, op: LESS_THAN, argPath: "domain.-", clause: ["start", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: startsOn, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["start", "<=", "{value} 23:59:59"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
   # Paged like every other book door: unpaged, one call returned `limit` rows and a calendar
   # longer than that read as a calendar that small.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 250 }
-  cache: { kind: ttl, seconds: 300 }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 - name: activitiesAll
   kind: api
@@ -480,22 +910,44 @@
   echoKeyAs: scopeKey
   args:
     domain: []
-    fields: [res_model, res_id, res_name, summary, date_deadline, user_id]
-    load: ""
-    limit: 500
+    fields: [res_model, res_id, res_name, summary, date_deadline, user_id, activity_type_id]
+    # No `load: ""`: the assignee's and the activity type's NAMES come only inside their pairs.
+    order: "date_deadline asc, id asc"
+    limit: 1000
   compute:
     res_model: "CASE r.res_model WHEN false THEN null ELSE r.res_model END"
     res_name: "CASE r.res_name WHEN false THEN null ELSE r.res_name END"
     summary: "CASE r.summary WHEN false THEN null ELSE r.summary END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
-    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    kind: "CASE r.activity_type_id WHEN false THEN null ELSE r.activity_type_id[1] END"
     # The vocabulary's FollowUp, and the key FOLLOW_UP_ON joins on (see OdooActivity).
     title: "CASE r.summary WHEN false THEN r.res_name ELSE r.summary END"
     dueOn: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     partnerId: "CASE r.res_model WHEN 'res.partner' THEN r.res_id ELSE null END"
-  # Paged for the same reason as meetingsAll.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 100 }
-  cache: { kind: ttl, seconds: 300 }
+    sourceUrl: "CASE r.res_model WHEN false THEN null ELSE 'http://localhost:8069/odoo/' + r.res_model + '/' + toString(r.res_id) END"
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: res_model, op: EQUALS, argPath: "domain.-", clause: ["res_model", "=", "{value}"] }
+    - { property: res_model, op: IN, argPath: "domain.-", clause: ["res_model", "in", "{values}"] }
+    - { property: res_id, op: EQUALS, argPath: "domain.-", clause: ["res_id", "=", "{value}"] }
+    - { property: res_id, op: IN, argPath: "domain.-", clause: ["res_id", "in", "{values}"] }
+    - { property: partnerId, op: EQUALS, argPath: "domain.-", clause: ["res_id", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: date_deadline, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: dueOn, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: dueOn, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: dueOn, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: dueOn, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 # Every company in the CRM, bought or not. The same record shape as customersAll.
 - name: companiesAll
@@ -507,9 +959,9 @@
   args:
     domain:
       - ["is_company", "=", true]
-    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, commercial_partner_id, industry_id, user_id, customer_rank, supplier_rank]
     # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
-    limit: 500
+    limit: 1000
   compute:
     email: "CASE r.email WHEN false THEN null ELSE r.email END"
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
@@ -525,27 +977,38 @@
     sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
     parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
     parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
-  # Same door, same fields as customersAll — so the same rules, for the same reasons.
+    commercialPartnerId: "CASE r.commercial_partner_id WHEN false THEN null ELSE r.commercial_partner_id[0] END"
+  # Same door, same fields as customersAll — so the same rules, for the same reasons. This is
+  # the door a single company is read through: `c.name = 'Qantas'` is one call.
   pushdown:
-    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
-    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
-    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
-    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
-    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"] }
-    - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
-    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
-    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"] }
-    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"] }
-    - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
-    - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
     - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
     - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
-  # Odoo pages by absolute OFFSET, not page number: `limit` is the page size and `offset`
-  # skips records already read. Without this the door made one call and returned `limit`
-  # rows — indistinguishable from a book that small, which is how 500 of 1,344 customers
-  # was reported as an exact figure. maxPages bounds the walk; hitting it warns.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 100 }
-  cache: { kind: ttl, seconds: 300 }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci }
+    - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
+    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
+    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci }
+    - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci }
+    - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
+    - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
+    - { property: country_id, op: EQUALS, argPath: "domain.-", clause: ["country_id", "=", "{value}"] }
+    - { property: country_id, op: IN, argPath: "domain.-", clause: ["country_id", "in", "{values}"] }
+    - { property: country, op: EQUALS, argPath: "domain.-", clause: ["country_id.name", "=", "{value}"] }
+    - { property: industry_id, op: EQUALS, argPath: "domain.-", clause: ["industry_id", "=", "{value}"] }
+    - { property: industry_id, op: IN, argPath: "domain.-", clause: ["industry_id", "in", "{values}"] }
+    - { property: industry, op: EQUALS, argPath: "domain.-", clause: ["industry_id.name", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: parent_id, op: EQUALS, argPath: "domain.-", clause: ["parent_id", "=", "{value}"] }
+    - { property: parent_id, op: IN, argPath: "domain.-", clause: ["parent_id", "in", "{values}"] }
+    - { property: relationship, op: EQUALS, argPath: "domain.-", clause: ["customer_rank", ">", 0], valuePattern: '^(customer)$' }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
 
 # ── Back from the ACCOUNT. The business vocabulary's CustomerAccount is a spine several systems
 # key; these lead from it to what Odoo holds, so a question that starts at an account — asked
@@ -553,7 +1016,8 @@
 
 # Odoo's record of an account, by the company's domain. `ilike` is a SUBSTRING match, so this
 # does not echo the asked key: the join matches each record's own `website` through the spine.
-# One call per account — `ilike` takes no list.
+# One call per account — `ilike` takes no list — which is why TRACKED_AS rides the company sweep
+# whenever a query has one (`ridesHub`).
 - name: customersByWebsite
   kind: api
   operation: partnersSearchRead
@@ -566,7 +1030,7 @@
       - ["website", "ilike", "{keys}"]
       # Companies only: a contact inherits nothing here, but one may carry the same website.
       - ["is_company", "=", true]
-    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, commercial_partner_id, industry_id, user_id, customer_rank, supplier_rank]
     # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
     limit: 20
   compute:
@@ -584,8 +1048,36 @@
     sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
     parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
     parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
+    commercialPartnerId: "CASE r.commercial_partner_id WHEN false THEN null ELSE r.commercial_partner_id[0] END"
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci }
+    - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
+    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
+    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci }
+    - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci }
+    - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
+    - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
+    - { property: country_id, op: EQUALS, argPath: "domain.-", clause: ["country_id", "=", "{value}"] }
+    - { property: country_id, op: IN, argPath: "domain.-", clause: ["country_id", "in", "{values}"] }
+    - { property: country, op: EQUALS, argPath: "domain.-", clause: ["country_id.name", "=", "{value}"] }
+    - { property: industry_id, op: EQUALS, argPath: "domain.-", clause: ["industry_id", "=", "{value}"] }
+    - { property: industry_id, op: IN, argPath: "domain.-", clause: ["industry_id", "in", "{values}"] }
+    - { property: industry, op: EQUALS, argPath: "domain.-", clause: ["industry_id.name", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: parent_id, op: EQUALS, argPath: "domain.-", clause: ["parent_id", "=", "{value}"] }
+    - { property: parent_id, op: IN, argPath: "domain.-", clause: ["parent_id", "in", "{values}"] }
+    - { property: relationship, op: EQUALS, argPath: "domain.-", clause: ["customer_rank", ">", 0], valuePattern: '^(customer)$' }
   # An account billing knows and the CRM does not is asked about on every query otherwise.
-  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+  cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
 
 # Every opportunity with a customer. The leading clause is the key; the OR after it asks for
 # archived leads too, because archived is how Odoo marks a LOST deal and search_read hides
@@ -602,38 +1094,92 @@
       - "|"
       - ["active", "=", true]
       - ["active", "=", false]
-    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, won_status, date_deadline, user_id, active, company_currency]
-    # No `load: ""`: a lead door is a PARTNER-DOOR shape (see the top of this file) — the
-    # vocabulary wants the stage, salesperson and currency NAMES, which come only inside pairs.
-    limit: 200
+    fields: [name, partner_id, expected_revenue, probability, email_from, stage_id, create_date, date_closed, date_last_stage_update, won_status, date_deadline, user_id, active, company_currency, type, priority]
+    # No `load: ""`: a lead door is a PARTNER-DOOR shape (see the top of this file).
+    limit: 1000
   compute:
     partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
     email_from: "CASE r.email_from WHEN false THEN null ELSE r.email_from END"
     stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE r.create_date END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE r.date_closed END"
+    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE r.date_last_stage_update END"
     won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
-    # The business vocabulary's Opportunity, in its own words: status is open/won/lost (Odoo
-    # says `pending` for open), amount is the deal value, closeOn the expected close while open
-    # and the day it was decided once won or lost. Odoo's own fields stay beside them.
+    type: "CASE r.type WHEN false THEN null ELSE r.type END"
+    # The vocabulary's Opportunity — see leadsByStage.
     title: "r.name"
-    # The vocabulary's names, lifted out of the pairs: the pipeline step in the CRM's own words,
-    # the salesperson, and the company currency the amount is in.
     stage: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[1] END"
     ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
     currency: "CASE r.company_currency WHEN false THEN null ELSE r.company_currency[1] END"
     sourceUrl: "'http://localhost:8069/odoo/crm.lead/' + toString(r.id)"
     status: "CASE r.won_status WHEN 'pending' THEN 'open' WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE null END"
     amount: "toFloat(r.expected_revenue)"
+    probabilityPercent: "toFloat(r.probability)"
+    probability: "toFloat(r.probability) / 100.0"
+    priorityLabel: "CASE r.priority WHEN '0' THEN 'low' WHEN '1' THEN 'medium' WHEN '2' THEN 'high' WHEN '3' THEN 'very_high' ELSE null END"
     closeOn: "CASE r.won_status WHEN 'pending' THEN (CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END) ELSE (CASE r.date_closed WHEN false THEN null ELSE substring(r.date_closed, 0, 10) END) END"
+  # "Acme's open deals" asks Odoo for Acme's open deals, not for all of Acme's history.
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: title, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: title, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: partner_id, op: EQUALS, argPath: "domain.-", clause: ["partner_id", "=", "{value}"] }
+    - { property: partner_id, op: IN, argPath: "domain.-", clause: ["partner_id", "in", "{values}"] }
+    - { property: stage, op: EQUALS, argPath: "domain.-", clause: ["stage_id.name", "=", "{value}"] }
+    - { property: stage, op: IN, argPath: "domain.-", clause: ["stage_id.name", "in", "{values}"] }
+    - { property: stage_id, op: EQUALS, argPath: "domain.-", clause: ["stage_id", "=", "{value}"] }
+    - { property: stage_id, op: IN, argPath: "domain.-", clause: ["stage_id", "in", "{values}"] }
+    - { property: won_status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "{value}"] }
+    - { property: won_status, op: IN, argPath: "domain.-", clause: ["won_status", "in", "{values}"] }
+    - { property: status, op: EQUALS, argPath: "domain.-", clause: ["won_status", "=", "{value}"], valuePattern: '^(won|lost)$' }
+    - { property: active, op: EQUALS, argPath: "domain.-", clause: ["active", "=", "{value}"] }
+    - { property: type, op: EQUALS, argPath: "domain.-", clause: ["type", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: email_from, op: EQUALS, argPath: "domain.-", clause: ["email_from", "=", "{value}"] }
+    - { property: email_from, op: CONTAINS, argPath: "domain.-", clause: ["email_from", "ilike", "{value}"], match: ci }
+    - { property: probabilityPercent, op: GREATER_THAN, argPath: "domain.-", clause: ["probability", ">", "{value}"] }
+    - { property: probabilityPercent, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", ">=", "{value}"] }
+    - { property: probabilityPercent, op: LESS_THAN, argPath: "domain.-", clause: ["probability", "<", "{value}"] }
+    - { property: probabilityPercent, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["probability", "<=", "{value}"] }
+    - { property: expected_revenue, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
+    - { property: expected_revenue, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
+    - { property: expected_revenue, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
+    - { property: expected_revenue, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", "<=", "{value}"] }
+    - { property: amount, op: GREATER_THAN, argPath: "domain.-", clause: ["expected_revenue", ">", "{value}"] }
+    - { property: amount, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", ">=", "{value}"] }
+    - { property: amount, op: LESS_THAN, argPath: "domain.-", clause: ["expected_revenue", "<", "{value}"] }
+    - { property: amount, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["expected_revenue", "<=", "{value}"] }
+    - { property: create_date, op: GREATER_THAN, argPath: "domain.-", clause: ["create_date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: create_date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: create_date, op: LESS_THAN, argPath: "domain.-", clause: ["create_date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: create_date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["create_date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: GREATER_THAN, argPath: "domain.-", clause: ["date_closed", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: LESS_THAN, argPath: "domain.-", clause: ["date_closed", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_deadline, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: date_deadline, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
   # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
   # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
   # the partners after it come back with nothing — the starvation `batchSafe: false` exists
   # for, arriving through `limit` instead. Paging reads the chunk out in full, so every key
   # in it is complete; Odoo pages by absolute offset.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 25 }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  maxKeysPerCall: 200
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 - name: contactsByCompany
@@ -651,19 +1197,31 @@
       - ["is_company", "=", false]
     fields: [name, email, function, phone, parent_id]
     load: ""
-    limit: 200
+    limit: 1000
   compute:
-    email: "CASE r.email WHEN false THEN null ELSE r.email END"
+    # The vocabulary's AccountContact keys a person by email, LOWER CASE — that is how a contact
+    # is recognised as the requester of a support case. Odoo keeps the address as typed.
+    email: "CASE r.email WHEN false THEN null ELSE toLower(r.email) END"
     function: "CASE r.function WHEN false THEN null ELSE r.function END"
+    jobTitle: "CASE r.function WHEN false THEN null ELSE r.function END"
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
     parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id END"
-  # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
-  # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
-  # the partners after it come back with nothing — the starvation `batchSafe: false` exists
-  # for, arriving through `limit` instead. Paging reads the chunk out in full, so every key
-  # in it is complete; Odoo pages by absolute offset.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 25 }
-  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+    sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
+  # email is lower-cased above, so equality is asked of Odoo without case (`=ilike`), which reads
+  # `%` and `_` as wildcards — an address holding either stays a graph-side filter.
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=ilike", "{value}"], valuePattern: '^([^%_]+)$', match: ci }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci }
+    - { property: function, op: CONTAINS, argPath: "domain.-", clause: ["function", "ilike", "{value}"], match: ci }
+    - { property: jobTitle, op: CONTAINS, argPath: "domain.-", clause: ["function", "ilike", "{value}"], match: ci }
+  # BATCHED AND TO-MANY: paged for the same reason as leadsByPartner.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  maxKeysPerCall: 200
+  cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
 
 # THE COMPANY HIERARCHY. On a company record Odoo's parent_id is its parent company (the
 # "Related Company" field of a company form); on a person it is their employer. One field, two
@@ -673,7 +1231,8 @@
 #
 # commercial_partner_id is not this. Odoo sets it to the record itself on every company, parent
 # or not, and to the company on a person: it is how a contact rolls up to the company it
-# trades as, and says nothing about who owns that company.
+# trades as, and says nothing about who owns that company. It rides along as
+# `commercialPartnerId` for exactly that roll-up.
 #
 # Down the hierarchy: the companies whose parent is one of the keys. Batched IN, and TO-MANY, so
 # paged for the same reason as contactsByCompany. No materializedKeyField: the book sweeps that
@@ -689,9 +1248,9 @@
     domain:
       - ["parent_id", "in", []]
       - ["is_company", "=", true]
-    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, commercial_partner_id, industry_id, user_id, customer_rank, supplier_rank]
     # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
-    limit: 200
+    limit: 1000
   compute:
     email: "CASE r.email WHEN false THEN null ELSE r.email END"
     phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
@@ -707,17 +1266,39 @@
     sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
     parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
     parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
-  # The filters a question about a group writes — which subsidiary, by name or domain — so
-  # Odoo narrows the family instead of the graph reading all of it. See customersAll.
+    commercialPartnerId: "CASE r.commercial_partner_id WHEN false THEN null ELSE r.commercial_partner_id[0] END"
+  # The filters a question about a group writes — which subsidiary, by name, domain, country or
+  # owner — so Odoo narrows the family instead of the graph reading all of it.
   pushdown:
-    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
-    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
-    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"] }
-    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
     - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
     - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 25 }
-  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci }
+    - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
+    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
+    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci }
+    - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci }
+    - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
+    - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
+    - { property: country_id, op: EQUALS, argPath: "domain.-", clause: ["country_id", "=", "{value}"] }
+    - { property: country_id, op: IN, argPath: "domain.-", clause: ["country_id", "in", "{values}"] }
+    - { property: country, op: EQUALS, argPath: "domain.-", clause: ["country_id.name", "=", "{value}"] }
+    - { property: industry_id, op: EQUALS, argPath: "domain.-", clause: ["industry_id", "=", "{value}"] }
+    - { property: industry_id, op: IN, argPath: "domain.-", clause: ["industry_id", "in", "{values}"] }
+    - { property: industry, op: EQUALS, argPath: "domain.-", clause: ["industry_id.name", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: parent_id, op: EQUALS, argPath: "domain.-", clause: ["parent_id", "=", "{value}"] }
+    - { property: parent_id, op: IN, argPath: "domain.-", clause: ["parent_id", "in", "{values}"] }
+    - { property: relationship, op: EQUALS, argPath: "domain.-", clause: ["customer_rank", ">", 0], valuePattern: '^(customer)$' }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  maxKeysPerCall: 200
+  cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
 
 # What was written on a partner's own record — a company or a person. The record carries
 # `res_id`, the partner it was written on, so no echo is needed and the batch is safe.
@@ -734,25 +1315,104 @@
       - ["message_type", "in", ["comment", "email"]]
     fields: [res_id, body, date, author_id, subject, message_type]
     # No `load: ""`: author_id is this door's only many2one, and its pair is where the author's NAME is.
-    limit: 200
+    order: "date desc, id desc"
+    limit: 1000
   compute:
     body: "CASE r.body WHEN false THEN null ELSE r.body END"
     date: "CASE r.date WHEN false THEN null ELSE r.date END"
     author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id[0] END"
     authorName: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
+    author: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
     subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
     message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
+    model: "'res.partner'"
     # The vocabulary's AccountNote.writtenOn: the day, from Odoo's UTC timestamp.
     writtenOn: "CASE r.date WHEN false THEN null ELSE substring(r.date, 0, 10) END"
     # The same key the book sweep computes, so a note reached either way reads alike.
     partnerKey: "r.res_id"
-  # BATCHED AND TO-MANY: one call carries up to `maxKeysPerCall` partners, and `limit` bounds
-  # the WHOLE response, not each key. Without paging a prolific partner fills the batch and
-  # the partners after it come back with nothing — the starvation `batchSafe: false` exists
-  # for, arriving through `limit` instead. Paging reads the chunk out in full, so every key
-  # in it is complete; Odoo pages by absolute offset.
-  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 50 }
+    sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.res_id)"
+  pushdown:
+    - { property: message_type, op: EQUALS, argPath: "domain.-", clause: ["message_type", "=", "{value}"] }
+    - { property: message_type, op: IN, argPath: "domain.-", clause: ["message_type", "in", "{values}"] }
+    - { property: author_id, op: EQUALS, argPath: "domain.-", clause: ["author_id", "=", "{value}"] }
+    - { property: author_id, op: IN, argPath: "domain.-", clause: ["author_id", "in", "{values}"] }
+    - { property: authorName, op: EQUALS, argPath: "domain.-", clause: ["author_id.name", "=", "{value}"] }
+    - { property: date, op: GREATER_THAN, argPath: "domain.-", clause: ["date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: writtenOn, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: writtenOn, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: writtenOn, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value} 23:59:59"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+  # BATCHED AND TO-MANY: paged for the same reason as leadsByPartner.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  maxKeysPerCall: 200
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+
+# EVERY partner, company and person alike. `customersAll` filters `customer_rank > 0` and
+# `companiesAll` filters `is_company = true`, so between them they see only COMPANIES — measured
+# 2026-09-21, 1,333 of them. Chatter does not respect that boundary: of 4,000 notes written on
+# `res.partner`, only 1,333 were on a partner either door could reach; the other 2,667 were
+# written on CONTACTS, the people at those companies, and were unreachable except one company
+# at a time through `contactsByCompany`. A notes-across-the-book question needs both sides in
+# one sweep, and `is_company` is what separates them afterwards.
+- name: partnersAll
+  kind: api
+  operation: partnersSearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    # No domain at all: the whole partner table, companies and people together.
+    domain: []
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, commercial_partner_id, industry_id, user_id, customer_rank, supplier_rank]
+    # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
+    limit: 1000
+  compute:
+    email: "CASE r.email WHEN false THEN null ELSE r.email END"
+    phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
+    city: "CASE r.city WHEN false THEN null ELSE r.city END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
+    country: "CASE r.country_id WHEN false THEN null ELSE r.country_id[1] END"
+    website: "CASE r.website WHEN false THEN null ELSE r.website END"
+    industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
+    industry: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
+    sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
+    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
+    parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
+    commercialPartnerId: "CASE r.commercial_partner_id WHEN false THEN null ELSE r.commercial_partner_id[0] END"
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
+    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci }
+    - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
+    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
+    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci }
+    - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci }
+    - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
+    - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
+    - { property: country_id, op: EQUALS, argPath: "domain.-", clause: ["country_id", "=", "{value}"] }
+    - { property: country_id, op: IN, argPath: "domain.-", clause: ["country_id", "in", "{values}"] }
+    - { property: country, op: EQUALS, argPath: "domain.-", clause: ["country_id.name", "=", "{value}"] }
+    - { property: industry_id, op: EQUALS, argPath: "domain.-", clause: ["industry_id", "=", "{value}"] }
+    - { property: industry_id, op: IN, argPath: "domain.-", clause: ["industry_id", "in", "{values}"] }
+    - { property: industry, op: EQUALS, argPath: "domain.-", clause: ["industry_id.name", "=", "{value}"] }
+    - { property: user_id, op: EQUALS, argPath: "domain.-", clause: ["user_id", "=", "{value}"] }
+    - { property: user_id, op: IN, argPath: "domain.-", clause: ["user_id", "in", "{values}"] }
+    - { property: ownerName, op: EQUALS, argPath: "domain.-", clause: ["user_id.name", "=", "{value}"] }
+    - { property: parent_id, op: EQUALS, argPath: "domain.-", clause: ["parent_id", "=", "{value}"] }
+    - { property: parent_id, op: IN, argPath: "domain.-", clause: ["parent_id", "in", "{values}"] }
+    - { property: relationship, op: EQUALS, argPath: "domain.-", clause: ["customer_rank", ">", 0], valuePattern: '^(customer)$' }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
 
 # THE WHOLE CHATTER BOOK, swept once. The per-anchor doors above (`messagesByPartner`,
 # `messagesByLead`) are right for a question about ONE account and wrong for a question about
@@ -770,50 +1430,6 @@
 # as `scopeKey`, paged by absolute offset. maxPages is high because chatter is the most
 # numerous thing in an Odoo instance by a wide margin — hitting it warns rather than silently
 # truncating.
-# EVERY partner, company and person alike. `customersAll` filters `customer_rank > 0` and
-# `companiesAll` filters `is_company = true`, so between them they see only COMPANIES — measured
-# 2026-09-21, 1,333 of them. Chatter does not respect that boundary: of 4,000 notes written on
-# `res.partner`, only 1,333 were on a partner either door could reach; the other 2,667 were
-# written on CONTACTS, the people at those companies, and were unreachable except one company
-# at a time through `contactsByCompany`. A notes-across-the-book question needs both sides in
-# one sweep, and `is_company` is what separates them afterwards.
-- name: partnersAll
-  kind: api
-  operation: partnersSearchRead
-  records: "$[*]"
-  keyArg: "context.scope"
-  echoKeyAs: scopeKey
-  args:
-    # No domain at all: the whole partner table, companies and people together.
-    domain: []
-    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
-    # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
-    limit: 500
-  compute:
-    email: "CASE r.email WHEN false THEN null ELSE r.email END"
-    phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
-    city: "CASE r.city WHEN false THEN null ELSE r.city END"
-    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
-    country: "CASE r.country_id WHEN false THEN null ELSE r.country_id[1] END"
-    website: "CASE r.website WHEN false THEN null ELSE r.website END"
-    industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
-    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
-    industry: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[1] END"
-    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
-    relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
-    sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
-    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
-    parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
-  pushdown:
-    - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
-    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
-    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
-    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
-    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"] }
-    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
-  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 100 }
-  cache: { kind: ttl, seconds: 300 }
-
 - name: messagesAll
   kind: api
   operation: messagesSearchRead
@@ -828,13 +1444,15 @@
       - ["message_type", "in", ["comment", "email"]]
     fields: [model, res_id, body, date, author_id, subject, message_type]
     # No `load: ""`: author_id is this door's only many2one, and its pair is where the author's NAME is.
-    limit: 500
+    order: "date desc, id desc"
+    limit: 1000
   compute:
     model: "CASE r.model WHEN false THEN null ELSE r.model END"
     body: "CASE r.body WHEN false THEN null ELSE r.body END"
     date: "CASE r.date WHEN false THEN null ELSE r.date END"
     author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id[0] END"
     authorName: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
+    author: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
     subject: "CASE r.subject WHEN false THEN null ELSE r.subject END"
     message_type: "CASE r.message_type WHEN false THEN null ELSE r.message_type END"
     # The vocabulary's AccountNote.writtenOn: the day, from Odoo's UTC timestamp.
@@ -844,11 +1462,23 @@
     # anchored note joins ride when a query has swept the whole chatter (materializedKeyField).
     leadKey: "CASE r.model WHEN 'crm.lead' THEN r.res_id ELSE null END"
     partnerKey: "CASE r.model WHEN 'res.partner' THEN r.res_id ELSE null END"
+    sourceUrl: "CASE r.model WHEN false THEN null ELSE 'http://localhost:8069/odoo/' + r.model + '/' + toString(r.res_id) END"
   pushdown:
     - { property: model, op: EQUALS, argPath: "domain.-", clause: ["model", "=", "{value}"] }
     - { property: model, op: IN, argPath: "domain.-", clause: ["model", "in", "{values}"] }
     - { property: res_id, op: EQUALS, argPath: "domain.-", clause: ["res_id", "=", "{value}"] }
     - { property: res_id, op: IN, argPath: "domain.-", clause: ["res_id", "in", "{values}"] }
     - { property: message_type, op: EQUALS, argPath: "domain.-", clause: ["message_type", "=", "{value}"] }
-  paging: { style: offset, param: offset, sizeParam: limit, size: 500, maxPages: 100 }
-  cache: { kind: ttl, seconds: 300 }
+    - { property: message_type, op: IN, argPath: "domain.-", clause: ["message_type", "in", "{values}"] }
+    - { property: author_id, op: EQUALS, argPath: "domain.-", clause: ["author_id", "=", "{value}"] }
+    - { property: author_id, op: IN, argPath: "domain.-", clause: ["author_id", "in", "{values}"] }
+    - { property: authorName, op: EQUALS, argPath: "domain.-", clause: ["author_id.name", "=", "{value}"] }
+    - { property: date, op: GREATER_THAN, argPath: "domain.-", clause: ["date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
+    - { property: date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: writtenOn, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: writtenOn, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: writtenOn, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value} 23:59:59"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 100 }
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }

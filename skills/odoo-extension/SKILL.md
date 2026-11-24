@@ -29,11 +29,18 @@ at the customer would recognize.
 
 ## 3. Write what the ORM declared — never guess
 
-A `many2one` with `relation: res.partner` IS the virtual join: keyField = the field (bare id via
-`load: ""`), recordKeyField = `id` on the target, producer = a `search_read` keyed
-`["id", "in", []]`. Follow the shapes in `types/odoo.yml` and `producers/odoo.yml` exactly —
-including `load: ""` on every producer, which is load-bearing: without it many2one fields arrive
-as `[id, name]` pairs and every join silently matches nothing.
+A `many2one` with `relation: res.partner` IS the virtual join: keyField = the field as a BARE
+id, recordKeyField = `id` on the target, producer = a `search_read` keyed `["id", "in", []]`.
+Follow the shapes in `types/odoo.yml` and `producers/odoo.yml` exactly. Every many2one must
+reach the graph as a bare id, which is load-bearing: left as an `[id, name]` pair every join
+silently matches nothing. Either ask for bare ids with `load: ""`, or — when the name is wanted
+too — fetch the pairs and `compute:` the field back to `r.x[0]` and the name into its own
+property, as the partner and lead doors do.
+
+Attribute each record by a key it CARRIES (`recordKeyField: partner_id`, or a computed one) rather
+than `echoKeyAs`: an echo is exact but makes the engine ask one key per call, so fifty customers
+become fifty calls. A to-many keyed door also declares `paging:` and `maxKeysPerCall`, or one
+prolific key fills the response and starves the rest of its chunk.
 
 New operations (a new model's `search_read`) are added to `apis/odoo-json2.json` as their own
 path — copy an existing one, change the model segment and operationId.
@@ -56,8 +63,14 @@ has been fetched, and — because what the source absorbs is what licenses the e
 `LIMIT` or ask for a `count()` instead of the records — an undeclared filter costs a call per
 anchor, not just a page. A `search_read` that can take the triple should be given it.
 
-Prove it the way you prove everything else here: run the question and look at the call count, not
-at the fact that the rule parsed.
+A date rule carries a `valuePattern` admitting only the spellings Odoo and the graph compare alike
+— `'^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$'` for a datetime, `'^(\d{4}-\d{2}-\d{2})$'` for a
+date — and text `CONTAINS` maps to `ilike` with `match: ci`. Never declare `aggregates:` over a door
+whose rules can widen (an `ilike`): the graph re-filters rows, but a count asked of the source cannot
+be re-filtered.
+
+Prove it the way you prove everything else here: run the question and look at the call count
+(`metrics.externalCalls` on a view's answer), not at the fact that the rule parsed.
 
 ## 4. Refresh, then prove it with the question
 

@@ -54,6 +54,10 @@
                     "type": "integer",
                     "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
                   },
+                  "order": {
+                    "type": "string",
+                    "description": "Sort order, Odoo's own: comma-separated `field asc|desc` (e.g. \"amount_residual desc, id desc\"). End with `id` so ties cannot reorder between pages of an offset walk."
+                  },
                   "load": {
                     "type": "string",
                     "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
@@ -108,6 +112,10 @@
                   "offset": {
                     "type": "integer",
                     "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
+                  },
+                  "order": {
+                    "type": "string",
+                    "description": "Sort order, Odoo's own: comma-separated `field asc|desc` (e.g. \"amount_residual desc, id desc\"). End with `id` so ties cannot reorder between pages of an offset walk."
                   },
                   "load": {
                     "type": "string",
@@ -164,6 +172,10 @@
                     "type": "integer",
                     "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
                   },
+                  "order": {
+                    "type": "string",
+                    "description": "Sort order, Odoo's own: comma-separated `field asc|desc` (e.g. \"amount_residual desc, id desc\"). End with `id` so ties cannot reorder between pages of an offset walk."
+                  },
                   "load": {
                     "type": "string",
                     "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
@@ -218,6 +230,10 @@
                   "offset": {
                     "type": "integer",
                     "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
+                  },
+                  "order": {
+                    "type": "string",
+                    "description": "Sort order, Odoo's own: comma-separated `field asc|desc` (e.g. \"amount_residual desc, id desc\"). End with `id` so ties cannot reorder between pages of an offset walk."
                   },
                   "load": {
                     "type": "string",
@@ -320,6 +336,10 @@
                     "type": "integer",
                     "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
                   },
+                  "order": {
+                    "type": "string",
+                    "description": "Sort order, Odoo's own: comma-separated `field asc|desc` (e.g. \"amount_residual desc, id desc\"). End with `id` so ties cannot reorder between pages of an offset walk."
+                  },
                   "load": {
                     "type": "string",
                     "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
@@ -375,6 +395,10 @@
                     "type": "integer",
                     "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
                   },
+                  "order": {
+                    "type": "string",
+                    "description": "Sort order, Odoo's own: comma-separated `field asc|desc` (e.g. \"amount_residual desc, id desc\"). End with `id` so ties cannot reorder between pages of an offset walk."
+                  },
                   "load": {
                     "type": "string",
                     "description": "Empty string makes many2one fields return bare ids instead of [id, name] pairs."
@@ -429,6 +453,10 @@
                   "offset": {
                     "type": "integer",
                     "description": "Records to skip before reading \u2014 Odoo's own search_read offset. With `limit` this is LIMIT/OFFSET paging, which is how the whole book is read rather than its first page."
+                  },
+                  "order": {
+                    "type": "string",
+                    "description": "Sort order, Odoo's own: comma-separated `field asc|desc` (e.g. \"amount_residual desc, id desc\"). End with `id` so ties cannot reorder between pages of an offset walk."
                   },
                   "load": {
                     "type": "string",

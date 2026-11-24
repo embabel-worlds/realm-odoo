@@ -57,7 +57,7 @@ if [ "$GROUP" = "none" ]; then echo "  skip no company in this book has a parent
 else
   PARENT=${GROUP%%:*}
   DOWN=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
-    -d "{\"cypher\":\"MATCH (b:OdooBook)-[:HAS_COMPANY]->(c:OdooCustomer) WHERE toString(c.id) = '$PARENT' MATCH (c)-[:HAS_SUBSIDIARY]->(s:OdooCustomer) OPTIONAL MATCH (s)-[:SUBSIDIARY_OF]->(up:OdooCustomer) RETURN s.id AS id, up.id AS up\"}")
+    -d "{\"cypher\":\"MATCH (b:OdooBook)-[:HAS_COMPANY]->(c:OdooCustomer) WHERE c.id = '$PARENT' MATCH (c)-[:HAS_SUBSIDIARY]->(s:OdooCustomer) OPTIONAL MATCH (s)-[:SUBSIDIARY_OF]->(up:OdooCustomer) RETURN s.id AS id, up.id AS up\"}")
   check "subsidiaries of $PARENT (vs L0)" "$GROUP" "$PARENT:$(echo "$DOWN" | py 'import json,sys;print(",".join(sorted({str(r["id"]) for r in json.load(sys.stdin)["rows"]}, key=int)))')"
   check "each leads back up to $PARENT" "$PARENT" "$(echo "$DOWN" | py 'import json,sys;print(",".join(sorted({str(r["up"]) for r in json.load(sys.stdin)["rows"]})) or "none")')"
 fi
@@ -76,6 +76,170 @@ for cid,owed in seen.values(): tot[cid]=tot.get(cid,0)+owed
 if not tot: print('none'); raise SystemExit
 pid,amt=max(tot.items(), key=lambda kv: kv[1]); print(f'{pid}:{amt:.2f}')")
 check "view top debtor (vs L0)" "$TOP_OWED" "$VIEW_TOP"
+
+echo "== L2b: what Odoo filters, and what a question costs =="
+# Every view below filters at the SOURCE (producers/odoo.yml, `pushdown:`), so each is checked
+# twice: its figure against Odoo asked directly, and its `metrics.externalCalls` against a
+# ceiling that does not grow with the book. A cache can only lower a call count, so the
+# ceilings hold warm or cold; a pushdown that silently stopped narrowing shows as a count past
+# its ceiling, or — for a single company — as a figure that is the book's rather than its own.
+ODOO="$ODOO" ODOO_KEY="$ODOO_KEY" APPLIANCE="$APPLIANCE" AUTHCFG="$AUTHCFG" python3 - <<'PYEOF' || fail=1
+import json, os, subprocess, urllib.request
+odoo, key = os.environ['ODOO'], os.environ['ODOO_KEY']
+base, auth = os.environ['APPLIANCE'], os.environ['AUTHCFG']
+
+def ask_odoo(model, method, body):
+    req = urllib.request.Request(f"{odoo}/json/2/{model}/{method}", data=json.dumps(body).encode(),
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as resp:
+        return json.load(resp)
+
+def view(name, args):
+    out = subprocess.run(["curl", "-s", "-K", auth, "-X", "POST", f"{base}/api/v1/views/{name}/invoke",
+                          "-H", "Content-Type: application/json", "-d", json.dumps({"args": args})],
+                         capture_output=True, text=True).stdout
+    d = json.loads(out, strict=False)
+    return d, d.get("data") or [], (d.get("metrics") or {}).get("externalCalls")
+
+bad = 0
+def check(name, ok, detail=""):
+    global bad
+    print(("  ok   " if ok else "  FAIL ") + name + (f" ({detail})" if detail and not ok else ""))
+    if not ok: bad += 1
+def within(name, calls, ceiling):
+    check(f"{name}: {calls} source call(s), ceiling {ceiling}", calls is not None and calls <= ceiling, f"got {calls}")
+
+money = lambda x: round(float(x or 0), 2)
+UNPAID = [["move_type", "=", "out_invoice"], ["state", "=", "posted"], ["payment_state", "in", ["not_paid", "partial"]]]
+
+# ONE COMPANY, O(1). The company that owes most, read by its exact name: one call for the company,
+# one for its invoices, one for its deals — however many companies the book holds.
+inv = ask_odoo("account.move", "search_read", {"domain": UNPAID, "fields": ["partner_id", "amount_residual"], "load": ""})
+owed = {}
+for r in inv: owed[r["partner_id"]] = owed.get(r["partner_id"], 0) + r["amount_residual"]
+companies = ask_odoo("res.partner", "search_read", {"domain": [["id", "in", list(owed)], ["is_company", "=", True]],
+                                                     "fields": ["name"], "load": ""}) if owed else []
+if not companies:
+    print("  skip no company owes anything in this book")
+else:
+    top = max(companies, key=lambda c: (owed[c["id"]], -c["id"]))
+    same_name = ask_odoo("res.partner", "search_count", {"domain": [["name", "=", top["name"]], ["is_company", "=", True]]})
+    d, rows, calls = view("OdooAccountSnapshot", {"company": top["name"]})
+    check("snapshot answered", d.get("status") == "SUCCEEDED", str(d)[:200])
+    check(f"snapshot of '{top['name']}' is that company alone ({same_name} of that exact name in Odoo)",
+          len(rows) == same_name and all(str(r.get("customerId")) == str(top["id"]) or same_name > 1 for r in rows),
+          str(rows)[:200])
+    mine = [r for r in rows if str(r.get("customerId")) == str(top["id"])]
+    check("snapshot owed reconciles to the cent", bool(mine) and money(mine[0].get("owed")) == money(owed[top["id"]]),
+          f"{mine[0].get('owed') if mine else None} vs {owed[top['id']]}")
+    deals = ask_odoo("crm.lead", "search_read", {"domain": [["partner_id", "=", top["id"]], "|", ["active", "=", True], ["active", "=", False]],
+                                                 "fields": ["won_status"], "load": ""})
+    for status, col in (("pending", "openDeals"), ("won", "wonDeals"), ("lost", "lostDeals")):
+        want = sum(1 for x in deals if x["won_status"] == status)
+        check(f"snapshot {col} = {want}", bool(mine) and int(mine[0].get(col) or 0) == want, str(mine[0].get(col) if mine else None))
+    within("single-company snapshot", calls, 3)
+    # Exact by default: the same name in another case, or a fragment of it, is not that company.
+    if top["name"].lower() != top["name"]:
+        d, rows, _ = view("OdooAccountSnapshot", {"company": top["name"].lower()})
+        check("snapshot name is matched exactly (other case answers nothing)",
+              not any(str(r.get("customerId")) == str(top["id"]) for r in rows), str(rows)[:150])
+
+# THE GROUP, exact by default. The company with the most companies filed under it: the exact name
+# answers that company alone, with exactly Odoo's direct subsidiaries at depth 1; a fragment does
+# not answer through OdooCompanyGroup at all, and does through the explicit search.
+kids = {}
+for r in ask_odoo("res.partner", "search_read", {"domain": [["is_company", "=", True], ["parent_id", "!=", False]],
+                                                  "fields": ["parent_id"], "load": ""}):
+    kids.setdefault(r["parent_id"], set()).add(r["id"])
+if not kids:
+    print("  skip no company in this book has a parent company")
+else:
+    pid, subs = max(kids.items(), key=lambda kv: (len(kv[1]), -kv[0]))
+    parent = ask_odoo("res.partner", "search_read", {"domain": [["id", "=", pid]], "fields": ["name"], "load": ""})[0]
+    d, rows, calls = view("OdooCompanyGroup", {"company": parent["name"]})
+    check("group answered", d.get("status") == "SUCCEEDED", str(d)[:200])
+    check(f"group of '{parent['name']}' names only companies called exactly that",
+          rows and all(r.get("company") == parent["name"] for r in rows), str({r.get('company') for r in rows}))
+    got = {int(r["subsidiaryId"]) for r in rows if str(r.get("companyId")) == str(pid) and r.get("depth") == 1}
+    check("direct subsidiaries reconcile against Odoo", got == subs, f"{sorted(got)} vs {sorted(subs)}")
+    within("exact-name group, four levels down", calls, 6)
+    d, rows, calls = view("OdooCompanyGroupById", {"companyId": str(pid)})
+    check("group by id answers the same subsidiaries",
+          {int(r["subsidiaryId"]) for r in rows if r.get("depth") == 1} == subs, str(rows)[:150])
+    within("group by id", calls, 6)
+    fragment = parent["name"][: max(3, len(parent["name"]) // 2)]
+    if fragment != parent["name"]:
+        _, rows, _ = view("OdooCompanyGroup", {"company": fragment})
+        check(f"a fragment ('{fragment}') does not answer the exact view", not any(str(r.get("companyId")) == str(pid) for r in rows))
+        _, rows, _ = view("OdooCompanyGroupSearch", {"nameContains": fragment.lower()})
+        check(f"the explicit search finds it from '{fragment.lower()}'", any(str(r.get("companyId")) == str(pid) for r in rows))
+
+# THE BIGGEST INVOICES: one page of the largest debts, and only the partners they name.
+d, rows, calls = view("OdooOutstandingInvoices", {"limit": 10})
+truth = sorted((money(r["amount_residual"]) for r in inv), reverse=True)[:10]
+check("top-10 invoices reconcile against Odoo", [money(r.get("owed")) for r in rows] == truth,
+      f"{[money(r.get('owed')) for r in rows]} vs {truth}")
+within("top-10 outstanding invoices", calls, 2)
+
+# THE PIPELINE OVER 60%: Odoo applies the probability filter and the order, so the top 10 is one page.
+OPEN = [["active", "=", True], ["probability", "<", 100], ["partner_id", "!=", False]]
+top10 = ask_odoo("crm.lead", "search_read", {"domain": OPEN + [["probability", ">=", 60]], "fields": ["expected_revenue"],
+                                            "order": "expected_revenue desc, id desc", "limit": 10, "load": ""})
+d, rows, calls = view("OdooOpenPipeline", {"minProbability": 60, "limit": 10})
+check("open pipeline over 60% reconciles against Odoo",
+      [money(r.get("expectedRevenue")) for r in rows] == [money(r["expected_revenue"]) for r in top10],
+      f"{[money(r.get('expectedRevenue')) for r in rows]} vs {[money(r['expected_revenue']) for r in top10]}")
+check("every row is at or over 60%", all(float(r.get("probabilityPercent") or 0) >= 60 for r in rows))
+within("top-10 open deals over 60%", calls, 2)
+
+# PIPELINE BY STAGE: every open deal, summed per stage — the figures, not just the rows.
+openl = ask_odoo("crm.lead", "search_read", {"domain": OPEN, "fields": ["stage_id", "expected_revenue"]})
+by_stage = {}
+for r in openl:
+    s = r["stage_id"][1] if r["stage_id"] else None
+    n, t = by_stage.get(s, (0, 0.0)); by_stage[s] = (n + 1, t + r["expected_revenue"])
+d, rows, _ = view("OdooPipelineByStage", {})
+got = {}
+for r in rows:
+    n, t = got.get(r.get("stage"), (0, 0.0)); got[r.get("stage")] = (n + int(r.get("openDeals") or 0), t + float(r.get("expectedRevenue") or 0))
+check("pipeline by stage reconciles against Odoo",
+      {k: (v[0], money(v[1])) for k, v in got.items()} == {k: (v[0], money(v[1])) for k, v in by_stage.items()},
+      f"{got} vs {by_stage}")
+
+# WINS IN A WINDOW: the decided-deal door, filtered by Odoo on status and day.
+won = ask_odoo("crm.lead", "search_read", {"domain": [["won_status", "=", "won"], ["partner_id", "!=", False], "|", ["active", "=", True], ["active", "=", False]],
+                                           "fields": ["expected_revenue", "date_closed"], "load": ""})
+days = sorted(r["date_closed"][:10] for r in won if r["date_closed"])
+if not days:
+    print("  skip no won deal in this book")
+else:
+    since = until = days[-1]
+    want = sorted((money(r["expected_revenue"]) for r in won if r["date_closed"] and r["date_closed"][:10] == since), reverse=True)[:20]
+    d, rows, calls = view("OdooWins", {"since": since, "until": until})
+    check(f"wins on {since} reconcile against Odoo", [money(r.get("value")) for r in rows] == want,
+          f"{[money(r.get('value')) for r in rows]} vs {want}")
+    within(f"wins on one day", calls, 3)
+    d, rows, _ = view("OdooWins", {})
+    check("all-time top win reconciles", rows and money(rows[0].get("value")) == max(money(r["expected_revenue"]) for r in won),
+          str(rows[:1]))
+
+# ONE DEAL BY ID, and the vocabulary's probability is a fraction.
+any_lead = ask_odoo("crm.lead", "search_read", {"domain": OPEN, "fields": ["name", "probability"], "limit": 1, "load": ""})
+if any_lead:
+    lid = any_lead[0]["id"]
+    out = subprocess.run(["curl", "-s", "-K", auth, "-X", "POST", f"{base}/api/v1/admin/kg/execute", "-H", "Content-Type: application/json",
+                          "-d", json.dumps({"cypher": f"MATCH (b:OdooBook)-[:HAS_ANY_LEAD]->(l:OdooLead) WHERE l.id = '{lid}' "
+                                                      "RETURN l.name AS name, l.probability AS p, l.probabilityPercent AS pct, l.status AS status"})],
+                         capture_output=True, text=True).stdout
+    kg = json.loads(out, strict=False).get("rows") or []
+    check(f"deal {lid} read by id", len(kg) == 1 and kg[0].get("name") == any_lead[0]["name"], str(kg)[:150])
+    if kg:
+        check("probability is the fraction of probabilityPercent",
+              abs(float(kg[0]["p"]) * 100 - float(kg[0]["pct"])) < 1e-6 and money(kg[0]["pct"]) == money(any_lead[0]["probability"]), str(kg[0]))
+        check("an open deal's status is 'open'", kg[0].get("status") == "open", str(kg[0]))
+import sys
+sys.exit(1 if bad else 0)
+PYEOF
 
 echo "== L3: the natural-language battery, figures not just rows =="
 EXP_AMT=${TOP_OWED#*:}

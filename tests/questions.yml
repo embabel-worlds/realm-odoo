@@ -55,3 +55,16 @@
 # composing the prose in-query — so the money beside the prose reconciles like any figure.
 - question: "prep me for my meeting with Qantas"
   expect: { matchesView: { name: OdooMeetingBriefing, column: owed, args: { customer: "Qantas" } } }
+# Totals per stage and per salesperson are their own views: the pipeline view lists deals, and a
+# total over a listing capped at 100 would be a total of the top 100.
+- question: "what is our pipeline by stage"
+  expect: { matchesView: { name: OdooPipelineByStage, column: expectedRevenue } }
+- question: "how much pipeline is each salesperson carrying"
+  expect: { matchesView: { name: OdooPipelineBySalesperson, column: expectedRevenue } }
+- question: "what deals did we lose this quarter"
+  expect: { minRows: 0 }   # the demo may have lost nothing this quarter; asserts the ask runs
+# One company, named exactly: three source calls whatever the size of the book (verify.sh L2b).
+- question: "how are we doing with Qantas"
+  expect: { matchesView: { name: OdooAccountSnapshot, column: owed, args: { company: "Qantas" } } }
+- question: "show me Qantas and its subsidiaries"
+  expect: { nonEmpty: true }

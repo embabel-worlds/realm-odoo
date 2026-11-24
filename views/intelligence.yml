@@ -10,17 +10,19 @@
 
 - name: OdooMeetingBriefing
   description: |
-    Meeting preparation: for each upcoming calendar meeting, who you are meeting, what they
-    owe (exact), the open deals with win odds and how their chatter threads read, who
+    A briefing for each upcoming meeting: debt, deals, chatter and news. For each upcoming
+    calendar meeting (past meetings never), who you are meeting, what they owe (exact), the open deals with win odds and how their chatter threads read, who
     ultimately owns them, recent news — and a composed 4-6 sentence briefing. Answers "prep
     me for my meeting with X", "brief me on my upcoming meetings", "what do I need to know
-    before my meetings". The customer parameter narrows to one counterparty by name.
+    before my meetings". The customer parameter narrows to one counterparty, named exactly.
+    Upcoming means starting on or after today's date on the appliance's clock; meeting times
+    are UTC.
   outputLabel: MeetingBriefing
   params:
     customer:
       type: string
       default: ""
-      description: "Only meetings whose counterparty name contains this (case-insensitive). Empty = all upcoming."
+      description: "Only meetings with the counterparty of exactly this name, as Odoo holds it (capitals included). Empty = every upcoming meeting."
   # The figures (owed, unpaidInvoices) are computed by the query and travel BESIDE the prose;
   # the harness reconciles them to the cent. synthesize() composes the briefing from the
   # assembled fact text only. News is attributed only through the Diffbot hop — a fictional
@@ -29,16 +31,16 @@
   # consumed, poisoning the transaction — fixed and pinned in FinalAnchorCutTest.)
   cypher: |
     MATCH (b:OdooBook)-[:HAS_MEETING]->(m:OdooMeeting)-[:MEETING_WITH]->(c:OdooCustomer)
-    WHERE m.start >= toString(date()) AND toLower(c.name) CONTAINS toLower($customer)
+    WHERE m.start >= toString(date()) AND ($customer = '' OR c.name = $customer)
     OPTIONAL MATCH (c)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
     WITH b, m, c, count(DISTINCT i) AS unpaid, coalesce(sum(i.amount_residual),0) AS owed
-    OPTIONAL MATCH (c)-[:HAS_OPPORTUNITY]->(l:OdooLead) WHERE l.status = 'open'
+    OPTIONAL MATCH (c)-[:HAS_OPPORTUNITY]->(l:OdooLead) WHERE l.won_status = 'pending'
     OPTIONAL MATCH (l)-[:HAS_MESSAGE]->(msg:OdooMessage)
     WITH m, c, unpaid, owed, l, collect(DISTINCT msg.body) AS bodies
     WITH m, c, unpaid, owed,
          collect(DISTINCT CASE WHEN l IS NULL THEN NULL ELSE
            'open deal "' + l.name + '": $' + coalesce(toString(l.expected_revenue),'?') +
-           ' at ' + coalesce(toString(l.probability),'?') + '% win probability' +
+           ' at ' + coalesce(toString(l.probabilityPercent),'?') + '% win probability' +
            CASE WHEN size(bodies) > 0
                 THEN ' -- thread: ' + reduce(s = '', x IN bodies[0..4] | s + ' | ' + coalesce(x,''))
                 ELSE ' -- no recent thread' END
@@ -65,8 +67,8 @@
 
 - name: OdooDealTriage
   description: |
-    Classify the largest open opportunities (by expected revenue, `limit` of them) — strategic /
-    standard / at_risk — and read the sentiment of their recent interactions from the chatter
+    Triage of the largest open deals: strategic, standard or at risk. Classifies the top `limit`
+    open opportunities by expected revenue — strategic / standard / at_risk — and read the sentiment of their recent interactions from the chatter
     thread. Each deal is a model call, so the view triages the top of the pipeline, not all of it. Answers "which deals are in trouble",
     "which deals are at risk", "how do our opportunities feel", "triage the pipeline",
     "understand our recent interactions", "which opportunities need attention". Sentiment is
@@ -81,6 +83,8 @@
       type: int
       default: 50
       description: "How many of the largest open deals to triage."
+  # The LIMIT sits before the hop to the customer, so the top `limit` deals are the pipeline
+  # door's first page (it returns biggest first) and only their customers are read.
   # The lens this replaces (lenses/deal-triage.yml) composed three queries and two
   # gateway.ai.classify calls in script; the engine's classify() aggregation now carries the
   # same judgments in-query, the rubric travelling as its third argument. The figures
@@ -93,8 +97,9 @@
   # Chatter arrives as Odoo's HTML — the judge is instructed to read meaning, and tags are
   # noise it tolerates (same stance as the briefing).
   cypher: |
-    MATCH (b:OdooBook)-[:HAS_OPEN_LEAD]->(l:OdooLead)-[:LEAD_OF]->(c:OdooCustomer)
-    WITH l, c ORDER BY l.expected_revenue DESC LIMIT $limit
+    MATCH (b:OdooBook)-[:HAS_OPEN_LEAD]->(l:OdooLead)
+    WITH l ORDER BY l.expected_revenue DESC LIMIT $limit
+    MATCH (l)-[:LEAD_OF]->(c:OdooCustomer)
     OPTIONAL MATCH (l)-[:HAS_MESSAGE]->(msg:OdooMessage)
     WITH l, c, collect(DISTINCT msg.body) AS bodies
     OPTIONAL MATCH (c)-[:HAS_DIFFBOT_ORG]->(d:DiffbotOrganization)
@@ -106,14 +111,14 @@
            CASE WHEN d IS NULL THEN ''
                 ELSE ' (' + coalesce(toString(d.nbEmployees),'?') + ' employees)' END +
            ', $' + coalesce(toString(l.expected_revenue),'?') +
-           ' at ' + coalesce(toString(l.probability),'?') + '% win probability' +
+           ' at ' + coalesce(toString(l.probabilityPercent),'?') + '% win probability' +
            CASE WHEN thread = '' THEN ' | no recent interactions'
                 ELSE ' | thread: ' + thread END,
            'strategic,standard,at_risk',
            'One open sales opportunity. strategic: large value or a major company, worth leadership attention. at_risk: the interactions or odds say it is stalling or souring, whatever its size. standard: everything else.') AS triage
     WHERE $triage = '' OR triage = $triage
     RETURN l.id AS leadId, l.name AS deal, c.id AS customerId, c.name AS customer,
-           l.expected_revenue AS revenue, l.probability AS probability,
+           l.expected_revenue AS revenue, l.currency AS currency, l.probabilityPercent AS probabilityPercent,
            toInteger(d.nbEmployees) AS headcount,
            classify(thread, 'positive,neutral,negative',
              'Each item is the recent chatter on one sales opportunity. Judge the current disposition of the customer toward the deal from what was actually written.') AS sentiment,
