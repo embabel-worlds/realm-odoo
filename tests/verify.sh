@@ -367,6 +367,57 @@ check("per-customer = the same folded from the records",
       got == {str(r["id"]): (r["n"], money(r["revenue"])) for r in folded.get("rows") or []}, str(folded.get("rows")))
 calls("pushed", pushed); calls("from records", folded)
 
+# HOW MANY CUSTOMERS, COMPANIES, PARTNERS. Each partner door declares a search_count over its own
+# domain, so a count is one call — or none, when an earlier check in this run left the answer in
+# the cache — where it used to read every record. Each is checked against Odoo asked directly and
+# against the same count folded from the records, and a filter Odoo applies exactly rides along.
+def one_count(d):
+    log = d.get("apiCallLog") or []
+    return d.get("apiCalls") == 0 or (d.get("apiCalls") == 1 and log and log[0].split(" ")[0] == "partnersSearchCount")
+def partner_count(label, door, domain, where=""):
+    want = ask_odoo("res.partner", "search_count", {"domain": domain})
+    q = f"MATCH (b:OdooBook {{scope: 'all'}})-[:{door}]->(c:OdooCustomer){where}"
+    pushed = kg(f"{q} RETURN count(c) AS n")
+    folded = kg(f"{q} RETURN count(c) AS n, min(c.name) AS first")
+    p, f = (pushed.get("rows") or [{}])[0].get("n"), (folded.get("rows") or [{}])[0].get("n")
+    check(f"{label} = Odoo's {want}", p == want, f"got {p}")
+    check(f"{label} = the same folded from the records", p == f, f"{p} vs {f}")
+    check(f"{label} is one search_count", one_count(pushed), str(pushed.get("apiCallLog")))
+    calls("pushed", pushed); calls("from records", folded)
+    return pushed
+
+CUST = [["customer_rank", ">", 0]]
+partner_count("how many customers", "HAS_CUSTOMER", CUST)
+partner_count("how many companies", "HAS_COMPANY", [["is_company", "=", True]])
+partner_count("how many partners", "HAS_PARTNER", [])
+partner_count("how many partners are companies", "HAS_PARTNER", [["is_company", "=", True]], " WHERE c.is_company = 'true'")
+top = ask_odoo("res.partner", "read_group", {"domain": CUST + [["country_id", "!=", False]], "fields": ["country_id"],
+                                             "groupby": ["country_id"], "orderby": "country_id_count desc", "limit": 1})
+if top:
+    country = top[0]["country_id"][1].replace("'", "\\'")
+    partner_count(f"how many customers in {country}", "HAS_CUSTOMER", CUST + [["country_id.name", "=", top[0]["country_id"][1]]],
+                  f" WHERE c.country = '{country}'")
+
+# A CONTAINS the query case-folds is exact under ilike and is still one search_count; one written
+# case-sensitively is widened by ilike, and a fragment holding % or _ is a wildcard to ilike, so
+# both of those are counted from the records — and must still be right.
+name = next((r["name"] for r in ask_odoo("res.partner", "search_read", {"domain": CUST, "fields": ["name"], "limit": 1, "order": "id"})), "")
+word = next((w for w in name.split() if len(w) > 3 and w.isalpha()), None)
+if word:
+    names = [r["name"] for r in ask_odoo("res.partner", "search_read", {"domain": CUST + [["name", "ilike", word]], "fields": ["name"]})]
+    q = "MATCH (b:OdooBook {scope: 'all'})-[:HAS_CUSTOMER]->(c:OdooCustomer)"
+    folded_ci = kg(f"{q} WHERE toLower(c.name) CONTAINS '{word.lower()}' RETURN count(c) AS n")
+    want = sum(1 for n in names if word.lower() in n.lower())
+    check(f"customers named with '{word.lower()}' (any case) = {want}", (folded_ci.get("rows") or [{}])[0].get("n") == want, str(folded_ci.get("rows")))
+    check(f"customers named with '{word.lower()}' (any case) is one search_count", one_count(folded_ci), str(folded_ci.get("apiCallLog")))
+    calls("case-folded CONTAINS", folded_ci)
+    cs = kg(f"{q} WHERE c.name CONTAINS '{word.upper()}' RETURN count(c) AS n")
+    want = sum(1 for n in names if word.upper() in n)
+    check(f"customers named with '{word.upper()}' (case as written) = {want}", (cs.get("rows") or [{}])[0].get("n") == want, str(cs.get("rows")))
+wild = kg("MATCH (b:OdooBook {scope: 'all'})-[:HAS_CUSTOMER]->(c:OdooCustomer) WHERE toLower(c.name) CONTAINS '%' RETURN count(c) AS n")
+want = ask_odoo("res.partner", "search_count", {"domain": CUST + [["name", "like", "\\%"]]})
+check(f"customers named with a literal '%' = {want}, not every customer", (wild.get("rows") or [{}])[0].get("n") == want, str(wild.get("rows")))
+
 import sys
 sys.exit(1 if bad else 0)
 PYEOF
