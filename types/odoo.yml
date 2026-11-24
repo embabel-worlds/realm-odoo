@@ -120,8 +120,8 @@
   # TRACKED_AS leads back here, and from here to Odoo's opportunities, contacts and notes.
   parents: [CrmAccount]
   description: >-
-    One Odoo partner (res.partner), identified by `id`: a COMPANY (is_company 'true') or a
-    PERSON/address ('false'). parent_id means two things: on a company its parent company, on a
+    One Odoo partner (res.partner), identified by `id`: a COMPANY (is_company true) or a
+    PERSON/address (false). parent_id means two things: on a company its parent company, on a
     person their employer. One company by name is one call: MATCH
     (b:OdooBook)-[:HAS_COMPANY]->(c) WHERE c.name = $name (exact, case and all).
     Which door: HAS_CUSTOMER — partners we have sold to or invoiced (customer_rank > 0), companies
@@ -140,7 +140,7 @@
     city: "City of the partner's address, as typed in Odoo."
     country_id: "Country id (bare). The country's NAME is `country`."
     country: "The country, by name ('Australia')."
-    is_company: "Whether the partner is a company: the STRING 'true' for a company, 'false' for a person or an address. Write `c.is_company = 'true'`."
+    is_company: { type: boolean, description: "True for a company, false for a person or an address. Write `c.is_company = true`; Odoo applies it, and counts it." }
     # What identifies the COMPANY, as opposed to `id`, which identifies Odoo's record of it and
     # is what every join in this realm keys on. The spine normalizes; this realm sends the URL
     # exactly as Odoo holds it.
@@ -182,8 +182,10 @@
         description: "Every company the CRM knows — customers and prospects alike. The door for ONE company: `WHERE c.name = $name` or `c.id = $id` is one call; how many is one search_count." }
     # BOTH SIDES. HAS_CUSTOMER and HAS_COMPANY each reach companies only; this reaches the
     # PEOPLE too, which is what a question about notes needs — most chatter is written on a
-    # contact, not on the company record. Split them afterwards on `is_company`, which Odoo
-    # spells as the STRING 'true'/'false', not a boolean.
+    # contact, not on the company record. Split them afterwards on `is_company`, a boolean:
+    # `c.is_company = true`. It was once described as the string 'true', and a records read
+    # compared that way matched nothing while Odoo's count, given the same filter, matched every
+    # company.
     - { anchorLabel: OdooBook, relationship: HAS_PARTNER, keyField: scope,
         recordKeyField: scopeKey, producer: partnersAll, maxFanoutTotal: 50000,
         description: "Every partner in the book — companies AND the people at them. The door for a question that must not stop at company records; how many is one search_count." }
