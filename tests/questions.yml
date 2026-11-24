@@ -2,7 +2,8 @@
 # realm's shape (counts, superlatives, statuses, windows, synonyms) and extended by USERS with
 # every question that ever disappointed them. Each is a permanent regression test; the runner
 # is tests/verify.sh. Money and count questions assert matchesView: the NL answer must equal
-# the curated view's figure — reconciliation without literals to rot.
+# the curated view's figure — reconciliation without literals to rot. A view that runs and finds
+# nothing (no win yet this quarter) is matched by an answer that states no figure.
 #
 # `requires:` names what a question is about that not every book has: `seed` — the demo book
 # seed/ loads (its named companies, stages, chatter arcs and meetings); `receivables` — unpaid

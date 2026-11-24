@@ -446,8 +446,16 @@ for case in battery:
         # routed through the view) — comparing the view's totalOwed against the answer's
         # biggest number once failed a correct answer for leading with a headcount.
         want, got = top_figure(vrows, mv.get("column")), top_figure(rows, mv.get("column"))
-        ok = want is not None and got == want
-        print(("  ok   " if ok else "  FAIL ") + q + " -> " + str(got) + (" (view: %s)" % want))
+        if v.get("status") != "SUCCEEDED":
+            ok, note = False, " (view did not run: %s)" % str(v.get("error") or v)[:120]
+        elif not vrows:
+            # The view ran and found nothing — no win this quarter yet, a book that owes nothing. Its
+            # figure is "none", and the ask matches it by stating no figure: demanding a number here
+            # failed every honest answer, and passed only an ask that invented one.
+            ok, note = got is None, " (view: no rows, so the ask must state no figure)"
+        else:
+            ok, note = got == want, " (view: %s)" % want
+        print(("  ok   " if ok else "  FAIL ") + q + " -> " + str(got) + note)
         if not ok: bad += 1
     else:
         need = exp.get("minRows", 1 if exp.get("nonEmpty") else 0)
