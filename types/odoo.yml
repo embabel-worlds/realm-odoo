@@ -64,15 +64,15 @@
     priorityLabel: "Priority in words: low, medium, high or very_high. Filtered in the graph; Odoo is asked for nothing on it."
     email_from: "Email of the contact the lead came from, as typed."
     stage_id: "Stage id (bare). The stage's NAME is `stage`."
-    stage: "The pipeline stage, by name, in the CRM's own words ('New', 'Qualified', 'Proposition', 'Won' are Odoo's defaults; each business has its own). `l.stage = 'Proposition'` is applied by Odoo."
+    stage: "Pipeline stage by name, as Odoo shows it: each business has its own; Odoo's defaults are 'New', 'Qualified', 'Proposition', 'Won'. Filtered by Odoo."
     won_status: "Odoo's verdict: 'pending' (still open), 'won', or 'lost'. A deal archived without being lost stays 'pending' but is not in the pipeline (active=false)."
-    status: "The vocabulary's verdict: 'open', 'won' or 'lost' — won_status with 'pending' read as 'open'. `l.status = 'won'` (or 'lost') is applied by Odoo; for the open deals take HAS_OPEN_LEAD, or filter `l.won_status = 'pending'`, which Odoo applies on every door."
+    status: "'open', 'won' or 'lost' (won_status, 'pending' read as 'open'). Odoo applies 'won'/'lost'; for open deals use HAS_OPEN_LEAD or won_status = 'pending'."
     active: "False once the deal is archived — which is how Odoo marks a LOST deal, and which hides it from Odoo's own lists. The pipeline doors read active deals only."
     create_date: "SYSTEM clock: when the record was created in Odoo, UTC, 'YYYY-MM-DD HH:MM:SS'. On an imported or seeded book this is the load time, not when the deal began."
     date_closed: "SYSTEM clock: when the deal was marked won or lost, UTC, 'YYYY-MM-DD HH:MM:SS'. Null while open. The close date for 'won last quarter'."
     date_deadline: "BUSINESS date: the expected closing date the salesperson set, 'YYYY-MM-DD', no zone. Null when nobody set one."
     date_last_stage_update: "SYSTEM clock: when the deal last moved stage, UTC, 'YYYY-MM-DD HH:MM:SS'. How long a deal has sat still."
-    closeOn: "The vocabulary's close date, 'YYYY-MM-DD': date_deadline while open; the UTC day of date_closed once won or lost. Through HAS_DECIDED_LEAD a window on it is applied by Odoo."
+    closeOn: "'YYYY-MM-DD': date_deadline while open; the UTC day of date_closed once decided. Odoo applies a window on it through HAS_DECIDED_LEAD."
     lostReason: "Why a lost deal was lost, as Odoo names the reason ('Too expensive'). Only through HAS_DECIDED_LEAD; null when none was given."
     user_id: "The salesperson's Odoo user id (bare). Their NAME is `ownerName`."
     ownerName: "The salesperson who owns the deal, by name. `l.ownerName = $name` is applied by Odoo."
@@ -147,7 +147,7 @@
     # account no CRM record keys keeps them empty rather than borrow billing's guess.
     website:
       hub: CustomerAccount
-      description: "Company website URL, as Odoo holds it — the key to the business vocabulary's CustomerAccount (its registrable domain). A domain identifies a company; a name does not. Null when unset."
+      description: "Company website URL as Odoo holds it; keys the vocabulary's CustomerAccount by its registrable domain. A domain identifies a company, a name does not."
       metadata: { canonical: website }
     industry_id: "Industry id (bare). Its NAME is `industry`."
     industry: { description: "Industry, as Odoo names it ('Manufacturing').", metadata: { canonical: industry } }
@@ -156,12 +156,12 @@
     # Odoo's own measure: customer_rank counts the sales and invoices made out to the partner,
     # so above zero they have bought from us. A supplier we have never sold to is neither.
     relationship:
-      description: "customer (Odoo has sold to or invoiced them: customer_rank > 0), prospect (not yet, and not a supplier), or other (a supplier we have never sold to). `= 'customer'` is applied by Odoo."
+      description: "customer (sold to or invoiced: customer_rank > 0), prospect (not yet, not a supplier), or other (a supplier never sold to). Odoo applies 'customer'."
       metadata: { canonical: relationship }
     sourceUrl: { description: "Opens this partner in Odoo.", metadata: { canonical: sourceUrl } }
     parent_id: "Odoo's parent_id (bare id), which means two things: on a company its parent company, on a person the company they work at. Null when unset."
     parentCompanyId: "The parent company's partner id — parent_id, but only on a company record; null on a person and on a company with no parent. What SUBSIDIARY_OF follows."
-    commercialPartnerId: "Odoo's commercial_partner_id: the company a person or address trades under, and a company's own id on a company. Roll contacts up to their company with it; it says nothing about who OWNS a company (that is parentCompanyId)."
+    commercialPartnerId: "The company a person or address trades under (a company's own id on a company). Rolls contacts up; who OWNS a company is parentCompanyId."
     scopeKey: "Echo of the book scope this customer was fetched under."
   virtualJoins:
     - { anchorLabel: OdooBook, relationship: HAS_CUSTOMER, keyField: scope,
