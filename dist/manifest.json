@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-02T07:03:11.038Z",
+  "generatedAt": "2026-11-24T21:13:32.078Z",
   "entries": [
     {
       "namespace": "customer",
@@ -35,14 +35,7 @@
             "type": "string"
           },
           "sendInvitation": {
-            "oneOf": [
-              {
-                "type": "undefined"
-              },
-              {
-                "type": "undefined"
-              }
-            ]
+            "type": "boolean"
           }
         },
         "required": [
@@ -128,15 +121,10 @@
             "type": "number"
           },
           "kind": {
-            "oneOf": [
-              {
-                "type": "string",
-                "const": "todo"
-              },
-              {
-                "type": "string",
-                "const": "call"
-              }
+            "type": "string",
+            "enum": [
+              "todo",
+              "call"
             ]
           }
         },
@@ -223,15 +211,10 @@
             "type": "number"
           },
           "kind": {
-            "oneOf": [
-              {
-                "type": "string",
-                "const": "todo"
-              },
-              {
-                "type": "string",
-                "const": "call"
-              }
+            "type": "string",
+            "enum": [
+              "todo",
+              "call"
             ]
           }
         },
