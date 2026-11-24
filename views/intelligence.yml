@@ -67,7 +67,7 @@
 
 - name: OdooDealTriage
   description: |
-    Triage of the largest open deals: strategic, standard or at risk. Classifies the top `limit`
+    How our open deals feel: each one triaged and its chatter read for sentiment. Classifies the top `limit`
     open opportunities by expected revenue — strategic / standard / at_risk — and read the sentiment of their recent interactions from the chatter
     thread. Each deal is a model call, so the view triages the top of the pipeline, not all of it. Answers "which deals are in trouble",
     "which deals are at risk", "how do our opportunities feel", "triage the pipeline",
