@@ -160,3 +160,35 @@
     MATCH (b:OdooBook)-[:HAS_COMPANY]->(c:OdooCustomer)
     RETURN c.id AS customerId, c.name AS company, c.website AS website, c.city AS city
     ORDER BY company
+
+# The company hierarchy, from either end. Pinned by name because that is how the question is
+# asked, matched case-blind because a person does not type the CRM's capitals; a name that
+# several companies contain answers each of them, with its own group, rather than picking one.
+- name: OdooCompanyGroup
+  description: >-
+    A company and its group: the parent company it belongs to, and every company Odoo files
+    beneath it, up to four levels down, with how deep each sits and the chain that reaches it.
+    THE answer for "X and its subsidiaries", "which companies belong to X", "who owns X".
+    One row per subsidiary; a company with none answers one row with the subsidiary columns empty.
+  outputLabel: OdooCompanyGroupRow
+  params:
+    company:
+      type: string
+      description: "The company's name, or part of it. Every company whose name contains it is answered."
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_COMPANY]->(c:OdooCustomer)
+    WHERE toLower(c.name) CONTAINS toLower($company)
+    OPTIONAL MATCH (c)-[:SUBSIDIARY_OF]->(p:OdooCustomer)
+    OPTIONAL MATCH path = (c)-[:HAS_SUBSIDIARY*1..4]->(s:OdooCustomer)
+    RETURN c.id                AS companyId,
+           c.name              AS company,
+           c.website           AS website,
+           p.id                AS parentId,
+           p.name              AS parent,
+           s.id                AS subsidiaryId,
+           s.name              AS subsidiary,
+           s.website           AS subsidiaryWebsite,
+           s.relationship      AS subsidiaryRelationship,
+           coalesce(length(path), 0) AS depth,
+           [n IN coalesce(nodes(path), [c]) | n.name] AS chain
+    ORDER BY company, depth, subsidiary

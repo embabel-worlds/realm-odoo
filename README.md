@@ -29,7 +29,9 @@ its Odoo record, and ships the tests that prove the numbers.
   `keyType: int` (Odoo matches nothing on string ids, silently), `echoKeyAs` (join-safe
   attribution), partnerless leads filtered (Odoo spells "no partner" as `false`).
 - `views/` — the answer surface: receivables per customer, outstanding invoices, open
-  pipeline (probability-filterable), wins (date-windowable), customer count. Aggregation and
+  pipeline (probability-filterable), wins (date-windowable), customer count, and a
+  company's group (`OdooCompanyGroup`: its parent and every subsidiary Odoo files under it,
+  over the `SUBSIDIARY_OF` / `HAS_SUBSIDIARY` joins). Aggregation and
   identity-keyed dedupe live HERE, tested once. Every entity column travels with its id.
   Cross-realm views join the book to Diffbot firmographics (debtor ownership — "who
   ultimately owns the companies that owe us money") and to live news, gated through the

@@ -85,7 +85,7 @@
       - ["id", "in", []]
     # website rides along for the Diffbot bridge (types/diffbot.yml): a domain
     # identifies a company and a name does not, and website is Odoo's own field.
-    fields: [name, email, phone, city, country_id, is_company, website, industry_id, user_id, customer_rank, supplier_rank]
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
     # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
     # NO paging, and that is safe HERE for a reason worth writing down: this is a
     # lookup BY ID, so a chunk of `maxKeysPerCall` (50) keys returns at most 50
@@ -107,6 +107,8 @@
     ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
     relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
     sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
+    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
+    parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
   cache: { kind: ttl, seconds: 300 }
 
 # A customer's UNPAID posted customer invoices. Keyed on partner_id; the not_paid/partial
@@ -173,7 +175,7 @@
     domain:
       - ["customer_rank", ">", 0]
     # website rides along for the Diffbot bridge — see customersById.
-    fields: [name, email, phone, city, country_id, is_company, website, industry_id, user_id, customer_rank, supplier_rank]
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
     # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
     limit: 200
   compute:
@@ -189,6 +191,8 @@
     ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
     relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
     sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
+    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
+    parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
   # WHAT THE SOURCE ABSORBS DECIDES WHAT THE QUESTION COSTS. An Odoo domain is a list of
   # triples ANDed together, so `domain.-` appends one conjunct and no `linkPrevious` is needed.
   #
@@ -503,7 +507,7 @@
   args:
     domain:
       - ["is_company", "=", true]
-    fields: [name, email, phone, city, country_id, is_company, website, industry_id, user_id, customer_rank, supplier_rank]
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
     # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
     limit: 500
   compute:
@@ -519,6 +523,8 @@
     ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
     relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
     sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
+    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
+    parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
   # Same door, same fields as customersAll — so the same rules, for the same reasons.
   pushdown:
     - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
@@ -560,7 +566,7 @@
       - ["website", "ilike", "{keys}"]
       # Companies only: a contact inherits nothing here, but one may carry the same website.
       - ["is_company", "=", true]
-    fields: [name, email, phone, city, country_id, is_company, website, industry_id, user_id, customer_rank, supplier_rank]
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
     # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
     limit: 20
   compute:
@@ -576,6 +582,8 @@
     ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
     relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
     sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
+    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
+    parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
   # An account billing knows and the CRM does not is asked about on every query otherwise.
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
@@ -637,6 +645,10 @@
   args:
     domain:
       - ["parent_id", "in", []]
+      # People only. A company's parent_id is its PARENT COMPANY, so without this a subsidiary
+      # came back as a contact of its parent — a company filed as a person. Subsidiaries have
+      # their own door, subsidiariesByParent.
+      - ["is_company", "=", false]
     fields: [name, email, function, phone, parent_id]
     load: ""
     limit: 200
@@ -650,6 +662,60 @@
   # the partners after it come back with nothing — the starvation `batchSafe: false` exists
   # for, arriving through `limit` instead. Paging reads the chunk out in full, so every key
   # in it is complete; Odoo pages by absolute offset.
+  paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 25 }
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+
+# THE COMPANY HIERARCHY. On a company record Odoo's parent_id is its parent company (the
+# "Related Company" field of a company form); on a person it is their employer. One field, two
+# meanings, told apart by is_company. Every partner door therefore computes `parentCompanyId`
+# — parent_id, but ONLY on a company — and SUBSIDIARY_OF keys on that, never on parent_id, so a
+# walk up the hierarchy cannot step from a person to their employer.
+#
+# commercial_partner_id is not this. Odoo sets it to the record itself on every company, parent
+# or not, and to the company on a person: it is how a contact rolls up to the company it
+# trades as, and says nothing about who owns that company.
+#
+# Down the hierarchy: the companies whose parent is one of the keys. Batched IN, and TO-MANY, so
+# paged for the same reason as contactsByCompany. No materializedKeyField: the book sweeps that
+# could be ridden are narrower than this edge (HAS_CUSTOMER stops at companies that have bought),
+# and a subsidiary still being courted would be lost from its parent's family without a word.
+- name: subsidiariesByParent
+  kind: api
+  keyType: int
+  operation: partnersSearchRead
+  records: "$[*]"
+  keyArg: "domain.0.2"
+  args:
+    domain:
+      - ["parent_id", "in", []]
+      - ["is_company", "=", true]
+    fields: [name, email, phone, city, country_id, is_company, website, parent_id, industry_id, user_id, customer_rank, supplier_rank]
+    # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
+    limit: 200
+  compute:
+    email: "CASE r.email WHEN false THEN null ELSE r.email END"
+    phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
+    city: "CASE r.city WHEN false THEN null ELSE r.city END"
+    country_id: "CASE r.country_id WHEN false THEN null ELSE r.country_id[0] END"
+    country: "CASE r.country_id WHEN false THEN null ELSE r.country_id[1] END"
+    website: "CASE r.website WHEN false THEN null ELSE r.website END"
+    industry_id: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[0] END"
+    user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
+    industry: "CASE r.industry_id WHEN false THEN null ELSE r.industry_id[1] END"
+    ownerName: "CASE r.user_id WHEN false THEN null ELSE r.user_id[1] END"
+    relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
+    sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
+    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
+    parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
+  # The filters a question about a group writes — which subsidiary, by name or domain — so
+  # Odoo narrows the family instead of the graph reading all of it. See customersAll.
+  pushdown:
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"] }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"] }
+    - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
   paging: { style: offset, param: offset, sizeParam: limit, size: 200, maxPages: 25 }
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
@@ -737,6 +803,7 @@
     relationship: "CASE WHEN r.customer_rank > 0 THEN 'customer' WHEN r.supplier_rank > 0 THEN 'other' ELSE 'prospect' END"
     sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
     parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id[0] END"
+    parentCompanyId: "CASE r.parent_id WHEN false THEN null ELSE (CASE WHEN toString(r.is_company) = 'true' THEN r.parent_id[0] ELSE null END) END"
   pushdown:
     - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
     - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }

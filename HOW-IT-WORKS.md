@@ -68,6 +68,13 @@ Types declare what the records *are* and how they are reached. A join is declare
 `MEETING_WITH` is a per-element join over a *list* key: a meeting's attendee ids fan out to
 one fetch per attendee, so "who am I meeting and what do they owe us" is a single traversal.
 
+`SUBSIDIARY_OF` and `HAS_SUBSIDIARY` are self-joins on `OdooCustomer`: Odoo's company
+hierarchy, read from `parent_id` on company records. That field means two things in Odoo — the
+parent company on a company, the employer on a person — so the producers lift it into
+`parentCompanyId` only on companies, and the hierarchy keys on that. Up and down carry two
+names, so `-[:SUBSIDIARY_OF*1..4]->` walks to the top one parent per hop and never fans out to
+siblings on the way.
+
 `OdooBook` is the trick that makes bare questions work. Its `scope` property carries
 `identity: "true", default: "all"`, so a query that writes `MATCH (b:OdooBook)` with no pin
 self-seeds — "how many customers do we have" needs no magic literal.

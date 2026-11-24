@@ -40,6 +40,28 @@ KG=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Cont
   -d '{"cypher":"MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer) RETURN count(DISTINCT c) AS n"}')
 check "kg customer count" "$CUSTOMERS" "$(echo "$KG" | py 'import json,sys;print(json.load(sys.stdin)["rows"][0]["n"])')"
 
+echo "== L1b: the company hierarchy reconciles =="
+# Odoo's own answer: the company with the most companies filed under it, and their ids. The
+# realm must reach exactly those through HAS_SUBSIDIARY, every one of them must lead back up
+# through SUBSIDIARY_OF, and no person may appear among them. A book with no company hierarchy
+# is a real book: the check says so and moves on.
+GROUP=$(curl -s -X POST "$ODOO/json/2/res.partner/search_read" -H "Authorization: Bearer $ODOO_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"domain":[["is_company","=",true],["parent_id","!=",false]],"fields":["parent_id"],"load":""}' | py "
+import json,sys,collections
+kids=collections.defaultdict(list)
+for r in json.load(sys.stdin): kids[r['parent_id']].append(r['id'])
+if not kids: print('none'); raise SystemExit
+pid,ids=max(kids.items(), key=lambda kv: (len(kv[1]), -kv[0])); print(f'{pid}:{\",\".join(str(i) for i in sorted(ids))}')")
+if [ "$GROUP" = "none" ]; then echo "  skip no company in this book has a parent company"
+else
+  PARENT=${GROUP%%:*}
+  DOWN=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
+    -d "{\"cypher\":\"MATCH (b:OdooBook)-[:HAS_COMPANY]->(c:OdooCustomer) WHERE toString(c.id) = '$PARENT' MATCH (c)-[:HAS_SUBSIDIARY]->(s:OdooCustomer) OPTIONAL MATCH (s)-[:SUBSIDIARY_OF]->(up:OdooCustomer) RETURN s.id AS id, up.id AS up\"}")
+  check "subsidiaries of $PARENT (vs L0)" "$GROUP" "$PARENT:$(echo "$DOWN" | py 'import json,sys;print(",".join(sorted({str(r["id"]) for r in json.load(sys.stdin)["rows"]}, key=int)))')"
+  check "each leads back up to $PARENT" "$PARENT" "$(echo "$DOWN" | py 'import json,sys;print(",".join(sorted({str(r["up"]) for r in json.load(sys.stdin)["rows"]})) or "none")')"
+fi
+
 echo "== L2: the view, id-deduped, reconciles to the cent =="
 VIEW=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooPipelineReceivables/invoke" \
   -H 'Content-Type: application/json' -d '{"args":{"stage":"Proposition"}}')
