@@ -57,13 +57,21 @@
 #     deal and only 'open' on the pipeline door, and why `priorityLabel` (four words for four
 #     codes) is filtered in the graph.
 #
-# WHY NO `aggregates:`. "How many" is still answered by reading the records. JSON-2 has the right
-# methods — `search_count`, `read_group` — but the engine asks an aggregate with the producer's
-# own arguments: `search_count` would receive the page `limit` and count at most a page, and
-# `read_group` needs a `groupby` no search_read door may carry. Until an aggregate can carry its
-# own arguments, declaring one would return a confident wrong number. The page sizes below keep
-# the read to a handful of calls.
+# AGGREGATES — "how many" and "how much", answered by Odoo. JSON-2 has the methods: `search_count`
+# answers a bare number, `read_group` one row per group with `<field>_count` (or `__count`
+# ungrouped) and each `field:sum` under the field's own name. Each aggregate declares its OWN call —
+# `operation`, `args` — because a listing's arguments are a page: `search_count` reads the page
+# `limit` as an upper bound and counts at most a page, and `read_group` needs a `groupby` no
+# search_read call may carry. So the listing's `fields`, `limit`, `order` and `paging` never reach
+# it; the keys and every pushed filter still do, appended to the aggregate's own domain, which
+# restates the door's fixed conjuncts. Its rows pass through the door's `compute:`, which is how a
+# grouped row's [id, name] partner pair becomes the `partnerKey` it is attributed by.
 #
+# Declared only on doors with NO `CONTAINS` rule. `ilike` ignores case and reads `%` and `_` as
+# wildcards: harmless for records, which the graph re-filters, but a number cannot be re-filtered,
+# so a count over a widened filter would be a confident overcount. The partner and lead doors keep
+# reading records until a widening rule can be told apart from an exact one.
+
 # CACHE. Every door is a TTL cache, and every door also caches a miss (`negativeTtlSeconds`):
 # "this customer has no unpaid invoices" is the common answer, an empty calendar is an answer too,
 # and a positive-only cache asks Odoo again on every query. Partners change least (15 minutes); deals,
@@ -310,6 +318,49 @@
   # out in full; Odoo pages by absolute offset.
   paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
   maxKeysPerCall: 200
+  # Per customer as numbers: one read_group per measure, grouped by partner, for every key at once.
+  aggregates:
+    - measure: count
+      operation: invoicesReadGroup
+      args:
+        domain:
+          - ["partner_id", "in", []]
+          - ["move_type", "=", "out_invoice"]
+          - ["state", "=", "posted"]
+          - ["payment_state", "in", ["not_paid", "partial"]]
+        fields: ["amount_residual:sum"]
+        groupby: [partner_id]
+      records: "$[*]"
+      valueField: partner_id_count
+      keyField: partnerKey
+    - measure: sum
+      of: amount_residual
+      operation: invoicesReadGroup
+      args:
+        domain:
+          - ["partner_id", "in", []]
+          - ["move_type", "=", "out_invoice"]
+          - ["state", "=", "posted"]
+          - ["payment_state", "in", ["not_paid", "partial"]]
+        fields: ["amount_residual:sum"]
+        groupby: [partner_id]
+      records: "$[*]"
+      valueField: amount_residual
+      keyField: partnerKey
+    - measure: sum
+      of: amount_total
+      operation: invoicesReadGroup
+      args:
+        domain:
+          - ["partner_id", "in", []]
+          - ["move_type", "=", "out_invoice"]
+          - ["state", "=", "posted"]
+          - ["payment_state", "in", ["not_paid", "partial"]]
+        fields: ["amount_total:sum"]
+        groupby: [partner_id]
+      records: "$[*]"
+      valueField: amount_total
+      keyField: partnerKey
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 # A customer's sales orders, any state — the state field rides on the record so a query can
@@ -352,6 +403,29 @@
     - { property: date_order, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_order", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
   paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
   maxKeysPerCall: 200
+  # Per customer as numbers: one read_group per measure, grouped by partner, for every key at once.
+  aggregates:
+    - measure: count
+      operation: ordersReadGroup
+      args:
+        domain:
+          - ["partner_id", "in", []]
+        fields: ["amount_total:sum"]
+        groupby: [partner_id]
+      records: "$[*]"
+      valueField: partner_id_count
+      keyField: partnerKey
+    - measure: sum
+      of: amount_total
+      operation: ordersReadGroup
+      args:
+        domain:
+          - ["partner_id", "in", []]
+        fields: ["amount_total:sum"]
+        groupby: [partner_id]
+      records: "$[*]"
+      valueField: amount_total
+      keyField: partnerKey
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 # ── The book doors: fetch-all producers behind the OdooBook anchor, so questions about
@@ -454,6 +528,10 @@
     currency_id: "CASE r.currency_id WHEN false THEN null ELSE r.currency_id[0] END"
     currency: "CASE r.currency_id WHEN false THEN null ELSE r.currency_id[1] END"
     sourceUrl: "'http://localhost:8069/odoo/account.move/' + toString(r.id)"
+    # An ungrouped read_group over nothing answers `false` for a sum, not 0. Only an aggregate row
+    # can carry it — an invoice always has its amounts — and as null the sum ignores it.
+    amount_residual: "CASE r.amount_residual WHEN false THEN null ELSE r.amount_residual END"
+    amount_total: "CASE r.amount_total WHEN false THEN null ELSE r.amount_total END"
   # Largest debt first, and said so: "the 10 biggest outstanding invoices" is the first page.
   orderedBy: [{ property: amount_residual, descending: true }]
   # The money and due-date filters are the ones the receivables views actually write, and they
@@ -485,6 +563,43 @@
     - { property: invoice_date_due, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date_due", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: invoice_date_due, op: LESS_THAN, argPath: "domain.-", clause: ["invoice_date_due", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: invoice_date_due, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["invoice_date_due", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+  # The book's receivables as numbers: one search_count, one read_group over the whole domain.
+  aggregates:
+    - measure: count
+      operation: invoicesSearchCount
+      args:
+        domain:
+          - ["move_type", "=", "out_invoice"]
+          - ["state", "=", "posted"]
+          - ["payment_state", "in", ["not_paid", "partial"]]
+      valueField: "$"
+      keyField: scopeKey
+    - measure: sum
+      of: amount_residual
+      operation: invoicesReadGroup
+      args:
+        domain:
+          - ["move_type", "=", "out_invoice"]
+          - ["state", "=", "posted"]
+          - ["payment_state", "in", ["not_paid", "partial"]]
+        fields: ["amount_residual:sum"]
+        groupby: []
+      records: "$[*]"
+      valueField: amount_residual
+      keyField: scopeKey
+    - measure: sum
+      of: amount_total
+      operation: invoicesReadGroup
+      args:
+        domain:
+          - ["move_type", "=", "out_invoice"]
+          - ["state", "=", "posted"]
+          - ["payment_state", "in", ["not_paid", "partial"]]
+        fields: ["amount_total:sum"]
+        groupby: []
+      records: "$[*]"
+      valueField: amount_total
+      keyField: scopeKey
   paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
