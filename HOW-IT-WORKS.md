@@ -25,28 +25,41 @@ A producer is one parameterized fetch: an operation, a domain, a field list, and
 the engine injects join keys. Two shapes recur:
 
 **Keyed doors** fetch records *for* particular anchors. The engine batches the anchor keys
-into the domain's `IN` list:
+into the domain's `IN` list — up to 200 a call — and every record carries the key it belongs to:
 
 ```yaml
 - name: unpaidInvoicesByPartner
   operation: invoicesSearchRead
   keyType: int                 # Odoo domains are TYPED: partner_id in ["9"] matches NOTHING, silently
   keyArg: "domain.0.2"         # keys land in the IN list of the first domain clause
-  echoKeyAs: partnerKey        # each record is stamped with the key that fetched it
   args:
     domain:
       - ["partner_id", "in", []]
       - ["move_type", "=", "out_invoice"]
       - ["state", "=", "posted"]
       - ["payment_state", "in", ["not_paid", "partial"]]
-    load: ""                   # many2one fields come back as BARE IDS — what joins key on
+    fields: [name, partner_id, amount_total, amount_residual, invoice_date_due, currency_id, ...]
+  compute:
+    partnerKey: "r.partner_id[0]"   # the record says whose it is; no echo, so the call is batched
+  paging: { style: offset, sizeParam: limit, size: 1000 }   # to-many: read each chunk out in full
+  maxKeysPerCall: 200
 ```
 
 Three details carry most of the correctness weight, each learned from a live failure:
-`keyType: int` (string keys silently match nothing in a typed domain), `echoKeyAs` (records
-attribute back to the anchor that asked by the *echoed* key, never by guessing), and
-`load: ""` (without it `partner_id` arrives as an `[id, name]` pair and every traversal
-matches nothing).
+`keyType: int` (string keys silently match nothing in a typed domain), attributing each record
+by a key it CARRIES rather than one echoed back (an echo is exact, but costs one call per key —
+fifty customers were fifty calls), and reducing every many2one pair to its bare id in
+`compute:` (a `partner_id` left as an `[id, name]` pair makes every traversal match nothing).
+
+**Filters go to Odoo.** Every producer declares `pushdown:` rules mapping a query's predicate to
+a domain clause appended to the request — `l.status = 'won'` becomes `["won_status", "=",
+"won"]`, `l.stage = 'Proposition'` becomes `["stage_id.name", "=", "Proposition"]`,
+`c.name = $company` becomes `["name", "=", …]`. So a question about one company reads one
+company, and the graph re-applies every predicate after the fetch, so a rule can only ever save
+work, never change an answer. Dates are pushed only in the two spellings Odoo and the graph
+compare alike — `'YYYY-MM-DD'` and `'YYYY-MM-DD HH:MM:SS'` — and text `CONTAINS` is Odoo's
+case-blind `ilike`. A door that returns records in a declared order (`orderedBy`: the unpaid
+invoices largest first, the open pipeline biggest first) lets a top-N read only its first page.
 
 **Book doors** fetch whole sets — all customers, all open leads, all meetings — behind a
 single default anchor, so questions about the collection need no literal nobody could know.
@@ -67,6 +80,15 @@ Types declare what the records *are* and how they are reached. A join is declare
 
 `MEETING_WITH` is a per-element join over a *list* key: a meeting's attendee ids fan out to
 one fetch per attendee, so "who am I meeting and what do they owe us" is a single traversal.
+
+`SUBSIDIARY_OF` and `HAS_SUBSIDIARY` are self-joins on `OdooCustomer`: Odoo's company
+hierarchy, read from `parent_id` on company records. (A partner is a COMPANY or a PERSON, told
+apart by `is_company`; `commercialPartnerId` rolls a person up to the company they trade under,
+which is a different thing from who owns that company.) That field means two things in Odoo — the
+parent company on a company, the employer on a person — so the producers lift it into
+`parentCompanyId` only on companies, and the hierarchy keys on that. Up and down carry two
+names, so `-[:SUBSIDIARY_OF*1..4]->` walks to the top one parent per hop and never fans out to
+siblings on the way.
 
 `OdooBook` is the trick that makes bare questions work. Its `scope` property carries
 `identity: "true", default: "all"`, so a query that writes `MATCH (b:OdooBook)` with no pin
@@ -142,10 +164,10 @@ firmographics → news, assembles a per-meeting fact text, and reduces it:
 
 ```cypher
 MATCH (b:OdooBook)-[:HAS_MEETING]->(m:OdooMeeting)-[:MEETING_WITH]->(c:OdooCustomer)
-WHERE m.start >= toString(date()) AND toLower(c.name) CONTAINS toLower($customer)
+WHERE m.start >= toString(date()) AND ($customer = '' OR c.name = $customer)
 OPTIONAL MATCH (c)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
 WITH b, m, c, count(DISTINCT i) AS unpaid, coalesce(sum(i.amount_residual),0) AS owed
-OPTIONAL MATCH (b)-[:HAS_OPEN_LEAD]->(l:OdooLead)-[:LEAD_OF]->(c)
+OPTIONAL MATCH (c)-[:HAS_OPPORTUNITY]->(l:OdooLead) WHERE l.won_status = 'pending'
 OPTIONAL MATCH (l)-[:HAS_MESSAGE]->(msg:OdooMessage)
 -- ... two more stages assemble deal facts, thread text, firmographics, gated news ...
 RETURN m.id AS meetingId, m.name AS meeting, m.start AS starts,
@@ -190,7 +212,9 @@ customers remain as the honest contrast. Gated (`--yes`), idempotent, removable
 (`--remove`).
 
 `tests/verify.sh` is the reconciliation ladder — L0 asks Odoo directly and every layer above
-must agree exactly: traversals (L1), views to the cent (L2), the natural-language battery
+must agree exactly: traversals (L1), views to the cent (L2), what Odoo is asked to filter and
+what each question costs in source calls — one company is three, whatever the book (L2b), the
+natural-language battery
 with money asked three times (L3/L3b), app assets (L5), firmographics re-asked of Diffbot
 itself (L6), the AI judgments against the seeded, deliberately unambiguous chatter arcs
 (L7), and meeting briefings' figures against the receivables view (L8). Run it after every

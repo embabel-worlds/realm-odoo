@@ -24,13 +24,24 @@ its Odoo record, and ships the tests that prove the numbers.
   `OdooStagePipeline` (pinned by stage name) and `OdooBook` (identity default `all`, so an
   unpinned `MATCH (b:OdooBook)` self-pins — generators and humans write anchors bare).
   Every relation is declared from what the ORM itself states; nothing is guessed.
-- `producers/` — `search_read` through JSON-2 with domain pushdown. Conventions that were
-  each learned the hard way, and commented where they live: `load: ""` (bare ids for joins),
-  `keyType: int` (Odoo matches nothing on string ids, silently), `echoKeyAs` (join-safe
-  attribution), partnerless leads filtered (Odoo spells "no partner" as `false`).
+- `producers/` — `search_read` through JSON-2, reading only the fields the types use. Every
+  filter a question writes on a deal's status, stage, owner, type, priority, amount or dates, on
+  a partner's name, website, country, industry or owner, on an invoice's amounts and due date,
+  and on chatter, meetings and activities by date, is sent to Odoo as a domain clause — so one
+  company by name, or one deal by id, is one call. Keyed doors batch up to 200 keys a call, book
+  doors read 1,000 records a page, and a top-N by expected revenue or by amount owed is the
+  first page. Conventions that were each learned the hard way, and commented where they live:
+  bare many2one ids for joins, `keyType: int` (Odoo matches nothing on string ids, silently),
+  partnerless leads filtered (Odoo spells "no partner" as `false`).
 - `views/` — the answer surface: receivables per customer, outstanding invoices, open
-  pipeline (probability-filterable), wins (date-windowable), customer count. Aggregation and
-  identity-keyed dedupe live HERE, tested once. Every entity column travels with its id.
+  pipeline (probability-filterable) and its totals per stage and per salesperson, wins and
+  losses (date-windowable), customer count, one company's whole position
+  (`OdooAccountSnapshot`), and a company's group (`OdooCompanyGroup`: its parent and every
+  subsidiary Odoo files under it, over the `SUBSIDIARY_OF` / `HAS_SUBSIDIARY` joins). A company
+  is named EXACTLY as Odoo holds it; `OdooCompanyGroupById` takes its id, and
+  `OdooCompanyGroupSearch` is the explicit search on part of a name. Aggregation and
+  identity-keyed dedupe live HERE, tested once. Every entity column travels with its id, and
+  every money column with its currency.
   Cross-realm views join the book to Diffbot firmographics (debtor ownership — "who
   ultimately owns the companies that owe us money") and to live news, gated through the
   Diffbot hop so a fictional customer never attracts a real company's headlines. And two
@@ -81,7 +92,9 @@ its Odoo record, and ships the tests that prove the numbers.
     sh tests/verify.sh
 
 Green means: figures reconcile against Odoo to the cent, every view answers with every
-parameter, and all sixteen battery questions pass — money ones equal to their views.
+parameter, every filter Odoo is asked to apply narrows what comes back (L2b: one company costs
+at most three source calls, its group six, the ten biggest invoices two — whatever the size of
+the book), and every battery question passes — money ones equal to their views.
 
 ## Working on what you find
 
@@ -134,6 +147,15 @@ change in Odoo is what `apis/odoo-json2.json` declares. To change a method: edit
   sponsor's account, "— Chaser (an agent)" on its own.
   `tests/verify-writes.sh` calls every verb through the appliance, reconciles the result against
   Odoo, and undoes it; `verify.sh` runs it only with `VERIFY_WRITES=1`.
+- **Counts are read, not asked.** "How many" reads the records, a page of 1,000 at a time.
+  Odoo can count (`search_count`, `read_group`), but the engine asks an aggregate with the
+  producer's own arguments, which would send `search_count` the page `limit` and cap the count
+  at a page; until an aggregate can carry its own arguments, declaring one would answer a
+  confident wrong number. See WHY NO `aggregates:` in `producers/odoo.yml`.
+- **`probability` is a fraction** (0.65), as the business vocabulary defines it; Odoo's own
+  percent is `probabilityPercent` (65). Views that showed `probability` show
+  `probabilityPercent` since 0.2.0, and `OdooPipelineReceivables`' `pipeline` column is
+  `expectedRevenue`.
 - **Known boundaries**: leads without a partner are excluded from partner-joined doors
   (Odoo spells "no partner" as `false`; the engine now drops such keys at the seam, and the
   producer's domain filter also skips the wasted fetch); Odoo demo data genuinely contains duplicate

@@ -1,13 +1,25 @@
 # The realm's answer surface. The flagship view is the cross-module question Odoo's own UI —
 # and its Enterprise "Ask AI" — cannot compose: pipeline and receivables in one gaze, per
-# customer. Verified live against Odoo 19 demo data (Acme: $11k pipeline, $130k+ owed).
+# customer.
+#
+# COST IS PART OF THE SHAPE. A filter on a fetched node's own property, written as a literal or a
+# parameter, is applied by Odoo (producers/odoo.yml declares which), so these views filter in the
+# MATCH's WHERE and never wrap a property they want filtered at the source. A `WITH … ORDER BY …
+# LIMIT` directly before a hop bounds the hop to the rows kept, so "the ten biggest invoices and
+# who owes them" reads ten partners rather than the book's. Every money column travels with the
+# `currency` it is in.
+#
+# NAMES MATCH EXACTLY. A view pinned by a company's name takes the name as Odoo holds it, capitals
+# and all; a part of a name is an explicit, separately named search (OdooCompanyGroupSearch), and
+# an id is the most exact of all (OdooCompanyGroupById).
 
 - name: OdooPipelineReceivables
   description: >-
-    Every open opportunity at a CRM stage, with the customer it belongs to and every posted,
-    unpaid invoice that customer still owes. One row per (opportunity, invoice); an opportunity
-    whose customer owes nothing appears once with null invoice columns. The question this
-    answers: "who are we trying to sell MORE to while they still owe us money?"
+    Deals at one stage, beside what their customers still owe. Every active deal at the CRM
+    stage, with its customer and every posted, unpaid invoice that customer owes; at most `limit`
+    rows. One row per (deal, invoice); a deal whose customer owes
+    nothing appears once with null invoice columns. The question this answers: "who are we
+    trying to sell MORE to while they still owe us money?" Money is in `currency`, major units.
   outputLabel: PipelineReceivablesRow
   params:
     stage:
@@ -21,29 +33,31 @@
   cypher: |
     MATCH (q:OdooStagePipeline {stage: $stage})-[:HAS_LEAD]->(l:OdooLead)-[:LEAD_OF]->(c:OdooCustomer)
     OPTIONAL MATCH (c)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
-    RETURN c.id                AS customerId,
-           c.name              AS customer,
-           c.email             AS email,
-           l.id                AS leadId,
-           l.name              AS opportunity,
-           l.expected_revenue  AS pipeline,
-           l.probability       AS probability,
-           i.id                AS invoiceId,
-           i.name              AS invoice,
-           i.amount_residual   AS owed,
-           i.invoice_date_due  AS due
+    RETURN c.id                 AS customerId,
+           c.name               AS customer,
+           c.email              AS email,
+           l.id                 AS leadId,
+           l.name               AS opportunity,
+           l.expected_revenue   AS expectedRevenue,
+           l.currency           AS currency,
+           l.probabilityPercent AS probabilityPercent,
+           i.id                 AS invoiceId,
+           i.name               AS invoice,
+           i.amount_residual    AS owed,
+           i.currency           AS owedCurrency,
+           i.invoice_date_due   AS due
     ORDER BY customer, owed DESC
     LIMIT $limit
 
 - name: OdooReceivablesByCustomer
   description: >-
-    Which customers owe us money, most first: one row per customer with the count of posted
-    unpaid invoices and the exact total still owed. THE answer for "who owes us most",
-    "who still hasn't paid us", "unpaid customers", "our most valuable customer by
-    outstanding balance", "total receivables per customer". The payment-status filter is
-    INSIDE the view (posted invoices, not fully paid) — it needs no parameter to express it.
-    Grouping is by customer id, so duplicate names and duplicate invoice names cannot
-    inflate or merge anything.
+    Customers ranked by what they still owe us. One row per customer (and currency) with the
+    count of posted unpaid invoices and the exact total still owed, top `limit` only. THE answer for "who owes us most",
+    "who still hasn't paid us", "unpaid customers", "our most valuable customer by outstanding
+    balance", "total receivables per customer". The payment-status filter is INSIDE the view
+    (posted invoices, not fully paid) — it needs no parameter to express it. Grouping is by
+    customer id, so duplicate names and duplicate invoice numbers cannot inflate or merge
+    anything. For one customer's whole position use OdooAccountSnapshot.
   outputLabel: ReceivablesRow
   params:
     limit:
@@ -53,77 +67,140 @@
   cypher: |
     MATCH (b:OdooBook {scope:'all'})-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
     MATCH (b)-[:HAS_CUSTOMER]->(c:OdooCustomer)-[:HAS_UNPAID_INVOICE]->(i)
-    WITH c, count(i) AS unpaidInvoices, sum(i.amount_residual) AS totalOwed
-    RETURN c.id AS customerId, c.name AS customer, c.email AS email, unpaidInvoices, totalOwed
+    WITH c, i.currency AS currency, count(i) AS unpaidInvoices, sum(i.amount_residual) AS totalOwed
+    RETURN c.id AS customerId, c.name AS customer, c.email AS email, unpaidInvoices, totalOwed, currency
     ORDER BY totalOwed DESC
     LIMIT $limit
 
 - name: OdooOpenPipeline
   description: >-
-    The open pipeline: every open opportunity with its customer, stage and expected revenue,
-    highest value first. THE answer for "what deals are open", "pipeline by customer",
-    "biggest open opportunities" — including probability-filtered forms ("over 60%",
-    "likely to close") via minProbability.
+    The biggest open deals, with customer, stage, owner and win probability. Highest expected
+    revenue first, top `limit` only. THE answer for "what deals are open",
+    "pipeline by customer", "biggest open opportunities" — including probability-filtered forms
+    ("over 60%", "likely to close") via minProbability, which Odoo applies. Open means active and
+    under 100%; lost deals are archived and never here. For totals per stage or per salesperson
+    use OdooPipelineByStage / OdooPipelineBySalesperson.
   outputLabel: PipelineRow
   params:
     minProbability:
       type: int
       default: 0
-      description: "Only opportunities at or above this win probability percent (e.g. 60)."
+      description: "Only deals at or above this win probability, in PERCENT 0–100 (e.g. 60 for 'over 60%')."
     limit:
       type: int
       default: 100
-      description: "Maximum opportunities."
+      description: "Maximum deals."
   cypher: |
     MATCH (b:OdooBook {scope:'all'})-[:HAS_OPEN_LEAD]->(l:OdooLead)
-    WHERE l.probability >= $minProbability
+    WHERE l.probabilityPercent >= $minProbability
+    WITH l ORDER BY l.expected_revenue DESC LIMIT $limit
     OPTIONAL MATCH (l)-[:LEAD_OF]->(c:OdooCustomer)
     RETURN l.id AS leadId, l.name AS opportunity, c.id AS customerId, c.name AS customer,
-           l.expected_revenue AS expectedRevenue, l.probability AS probability
+           l.stage AS stage, l.ownerName AS salesperson,
+           l.expected_revenue AS expectedRevenue, l.currency AS currency,
+           l.probabilityPercent AS probabilityPercent, l.date_deadline AS expectedClose
     ORDER BY expectedRevenue DESC
-    LIMIT $limit
+
+- name: OdooPipelineByStage
+  description: >-
+    Open pipeline totals per stage: deals, expected and weighted revenue. How many open deals sit
+    at each stage, their total expected revenue, and the probability-weighted total (expected
+    revenue × win probability). Open deals only, not won or lost (OdooWins, OdooLosses).
+    THE answer for "pipeline by stage", "how much is in Proposition", "weighted pipeline",
+    "where are our deals stuck". Totals are per currency; open means active and under 100%.
+  outputLabel: PipelineStageRow
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_OPEN_LEAD]->(l:OdooLead)
+    WITH l.stage AS stage, l.currency AS currency, count(l) AS openDeals,
+         sum(l.expected_revenue) AS expectedRevenue,
+         sum(l.expected_revenue * l.probability) AS weightedRevenue
+    RETURN stage, openDeals, expectedRevenue, weightedRevenue, currency
+    ORDER BY expectedRevenue DESC
+
+- name: OdooPipelineBySalesperson
+  description: >-
+    Open pipeline totals per salesperson: deals, expected and weighted revenue. Each owner's open
+    deal count, total expected revenue and probability-weighted total; open deals only, not won
+    or lost. THE answer for "pipeline by rep", "whose pipeline is
+    biggest", "how much is each salesperson carrying". Unassigned deals group under a null
+    salesperson. Totals are per currency.
+  outputLabel: PipelineOwnerRow
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_OPEN_LEAD]->(l:OdooLead)
+    WITH l.ownerName AS salesperson, l.currency AS currency, count(l) AS openDeals,
+         sum(l.expected_revenue) AS expectedRevenue,
+         sum(l.expected_revenue * l.probability) AS weightedRevenue
+    RETURN salesperson, openDeals, expectedRevenue, weightedRevenue, currency
+    ORDER BY expectedRevenue DESC
 
 - name: OdooWins
   description: >-
-    Deals WON, biggest first: each won opportunity with its customer, value and close date.
-    THE answer for "our biggest win", "what did we win last quarter/month", "recent wins",
-    "deals closed won". Pass since/until as ISO dates (e.g. '2026-04-01') to window by close
-    date; omit them for all time.
+    Deals won, biggest first, optionally within a date window. Each won deal with its customer,
+    value, salesperson and the day it was won; top `limit` only, lost deals never. THE answer for "our biggest win", "what did we win last quarter/month", "recent
+    wins", "deals closed won". since/until window the day the deal was marked won (UTC), both
+    inclusive, as 'YYYY-MM-DD'; leave them at their defaults for all time. Odoo applies the
+    window, and the read is of decided deals only.
   outputLabel: WinRow
   params:
     since:
       type: string
-      default: ""
-      description: "Earliest close date, ISO (inclusive). Empty = no lower bound."
+      default: "1900-01-01"
+      description: "Earliest day won, 'YYYY-MM-DD', inclusive. The default means no lower bound."
     until:
       type: string
-      default: ""
-      description: "Latest close date, ISO (inclusive day; compares as string). Empty = no upper bound."
+      default: "9999-12-31"
+      description: "Latest day won, 'YYYY-MM-DD', inclusive. The default means no upper bound."
     limit:
       type: int
       default: 20
       description: "Maximum wins."
   cypher: |
-    MATCH (q:OdooStagePipeline {stage:'Won'})-[:HAS_LEAD]->(l:OdooLead)
-    WHERE ($since = '' OR l.date_closed >= $since)
-      AND ($until = '' OR l.date_closed <= $until + '~')
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_DECIDED_LEAD]->(l:OdooLead)
+    WHERE l.status = 'won' AND l.closeOn >= $since AND l.closeOn <= $until
+    WITH l ORDER BY l.expected_revenue DESC LIMIT $limit
     OPTIONAL MATCH (l)-[:LEAD_OF]->(c:OdooCustomer)
     RETURN l.id AS leadId, l.name AS win, c.id AS customerId, c.name AS customer,
-           l.expected_revenue AS value, l.date_closed AS closedOn
+           l.expected_revenue AS value, l.currency AS currency, l.ownerName AS salesperson,
+           l.closeOn AS closedOn, l.date_closed AS closedAt
     ORDER BY value DESC
-    LIMIT $limit
 
-# ── Diffbot enrichment views — stage two of the strangler: what Odoo's own records look like
-# joined to what Odoo can never hold. Both ride the DOMAIN key (types/diffbot.yml), never the
-# name fallback: a domain identifies a company, and a view that guessed by name would attribute
-# another company's figures to a customer. A customer whose website matches nothing in Diffbot
-# appears with null firmographic columns — absence is the truthful answer. Requires
-# realm-diffbot; without it these views return customers with nulls.
+- name: OdooLosses
+  description: >-
+    Deals lost, biggest first, with the reason Odoo recorded. Each lost deal with its customer,
+    value, salesperson and the day it was lost; top `limit` only. THE answer for "what did we lose", "why do we lose
+    deals", "biggest lost opportunities this quarter". since/until window the day the deal was
+    marked lost (UTC), both inclusive, 'YYYY-MM-DD'. Lost deals are archived in Odoo; this reads
+    them anyway.
+  outputLabel: LossRow
+  params:
+    since:
+      type: string
+      default: "1900-01-01"
+      description: "Earliest day lost, 'YYYY-MM-DD', inclusive. The default means no lower bound."
+    until:
+      type: string
+      default: "9999-12-31"
+      description: "Latest day lost, 'YYYY-MM-DD', inclusive. The default means no upper bound."
+    limit:
+      type: int
+      default: 20
+      description: "Maximum losses."
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_DECIDED_LEAD]->(l:OdooLead)
+    WHERE l.status = 'lost' AND l.closeOn >= $since AND l.closeOn <= $until
+    WITH l ORDER BY l.expected_revenue DESC LIMIT $limit
+    OPTIONAL MATCH (l)-[:LEAD_OF]->(c:OdooCustomer)
+    RETURN l.id AS leadId, l.name AS deal, c.id AS customerId, c.name AS customer,
+           l.expected_revenue AS value, l.currency AS currency, l.ownerName AS salesperson,
+           l.lostReason AS lostReason, l.closeOn AS lostOn
+    ORDER BY value DESC
 
 - name: OdooCustomerCount
   description: >-
-    How many customers are on the book — one row, one number. THE answer for "how many
-    customers do we have", "number of clients/accounts".
+    How many customers we have: partners we have sold to or invoiced. One row, one number —
+    Odoo's customer_rank above zero, archived partners excluded. THE answer for "how many
+    customers do we have", "number of clients/accounts". Prospects are not counted; every company
+    the CRM knows is OdooCompanies.
   outputLabel: CustomerCountRow
   cypher: |
     MATCH (b:OdooBook {scope:'all'})-[:HAS_CUSTOMER]->(c:OdooCustomer)
@@ -131,9 +208,11 @@
 
 - name: OdooOutstandingInvoices
   description: >-
-    The outstanding invoices themselves, biggest first: each posted unpaid customer invoice
-    with its customer, amount still owed and due date. THE answer for "biggest outstanding
-    invoices", "largest unpaid invoices", "top overdue invoices", "which invoices are open".
+    The biggest unpaid invoices, with who owes each and when it was due. Each posted unpaid
+    customer invoice with the partner it is made out to, the amount still owed, its currency and
+    due date; top `limit` only. THE answer for
+    "biggest outstanding invoices", "largest unpaid invoices", "top overdue invoices", "which
+    invoices are open". Reads one page of the largest debts and only the partners they name.
   outputLabel: OutstandingInvoiceRow
   params:
     limit:
@@ -142,21 +221,154 @@
       description: "How many invoices."
   cypher: |
     MATCH (b:OdooBook {scope:'all'})-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
-    OPTIONAL MATCH (b)-[:HAS_CUSTOMER]->(c:OdooCustomer)
-    WHERE c.id = toString(i.partner_id)
+    WITH i ORDER BY i.amount_residual DESC LIMIT $limit
+    OPTIONAL MATCH (i)-[:INVOICE_OF]->(c:OdooCustomer)
     RETURN i.id AS invoiceId, i.name AS invoice, c.id AS customerId, c.name AS customer,
-           i.amount_residual AS owed, i.invoice_date_due AS due, i.payment_state AS status
+           i.amount_residual AS owed, i.currency AS currency, i.invoice_date_due AS due,
+           i.payment_state AS status
     ORDER BY owed DESC
-    LIMIT $limit
 
 - name: OdooCompanies
   description: >-
-    Every company the CRM knows — customers and prospects — with its website. THE answer for
-    "which companies are in the CRM". Reading it also keys each of them to the business
-    vocabulary's CustomerAccount, which is how an account-level surface comes to know about a
-    company sales is courting and nobody bills yet.
+    Every company the CRM knows, customers and prospects, with its website. Also its city, owner
+    and relationship (customer / prospect / other); companies only, not the people at them, and
+    archived companies excluded. THE answer for "which companies are in the CRM".
+    Reading it also keys each of them to the business vocabulary's CustomerAccount, which is how
+    an account-level surface comes to know about a company sales is courting and nobody bills yet.
   outputLabel: OdooCompanyRow
   cypher: |
     MATCH (b:OdooBook)-[:HAS_COMPANY]->(c:OdooCustomer)
-    RETURN c.id AS customerId, c.name AS company, c.website AS website, c.city AS city
+    RETURN c.id AS customerId, c.name AS company, c.website AS website, c.city AS city,
+           c.relationship AS relationship, c.ownerName AS accountOwner
     ORDER BY company
+
+# ONE COMPANY, read the way a person asks about it: by its exact name. Three reads keyed on that
+# one company — the company itself (Odoo filters by name), its unpaid invoices and its deals —
+# whatever the size of the book.
+- name: OdooAccountSnapshot
+  description: >-
+    One company's position: what it owes, its open deals, wins and losses. One row: unpaid
+    invoices and the total still owed, open deals and their expected revenue, what we have won
+    from it and how many deals we lost. THE answer for "how are we doing with X", "X's account", "what does X owe and what are
+    we selling them". The company is named EXACTLY as Odoo holds it. Invoices and deals are those
+    filed on the company record itself — not its subsidiaries' and not the people at it; for its
+    group use OdooCompanyGroup.
+  outputLabel: OdooAccountSnapshotRow
+  params:
+    company:
+      type: string
+      required: true
+      description: "The company's name EXACTLY as Odoo holds it — capitals, punctuation and legal suffix included. Not a fragment."
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_COMPANY]->(c:OdooCustomer)
+    WHERE c.name = $company
+    OPTIONAL MATCH (c)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
+    WITH c, count(DISTINCT i) AS unpaidInvoices, coalesce(sum(i.amount_residual), 0) AS owed
+    OPTIONAL MATCH (c)-[:HAS_OPPORTUNITY]->(l:OdooLead)
+    WITH c, unpaidInvoices, owed,
+         sum(CASE WHEN l.status = 'open' THEN 1 ELSE 0 END) AS openDeals,
+         sum(CASE WHEN l.status = 'open' THEN l.expected_revenue ELSE 0 END) AS openPipeline,
+         sum(CASE WHEN l.status = 'won' THEN 1 ELSE 0 END) AS wonDeals,
+         sum(CASE WHEN l.status = 'won' THEN l.expected_revenue ELSE 0 END) AS wonValue,
+         sum(CASE WHEN l.status = 'lost' THEN 1 ELSE 0 END) AS lostDeals
+    RETURN c.id AS customerId, c.name AS company, c.website AS website,
+           c.relationship AS relationship, c.ownerName AS accountOwner,
+           owed, unpaidInvoices, openDeals, openPipeline, wonDeals, wonValue, lostDeals
+
+# The company hierarchy, from either end. The default is pinned by the EXACT name — the company
+# a person names, not every company whose name contains it ('Acme' must not answer 'Acme Freight'
+# and 'Acmeville' too). Two siblings say the other things a person might mean: an id, and an
+# explicit search on part of a name, which answers every company it matches, each with its own
+# group, rather than picking one.
+- name: OdooCompanyGroup
+  description: >-
+    A company with its parent and every subsidiary, by exact name. The parent company it belongs
+    to, and every company Odoo files beneath it, up to four levels down (not deeper), with how
+    deep each sits and the chain that reaches it.
+    THE answer for "X and its subsidiaries", "which companies belong to X", "who owns X". The
+    company is named EXACTLY as Odoo holds it; for part of a name use OdooCompanyGroupSearch,
+    for an id OdooCompanyGroupById. One row per subsidiary; a company with none answers one row
+    with the subsidiary columns empty.
+  outputLabel: OdooCompanyGroupRow
+  params:
+    company:
+      type: string
+      required: true
+      description: "The company's name EXACTLY as Odoo holds it — capitals, punctuation and legal suffix included. Not a fragment: 'Acme' does not answer 'Acme Freight'."
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_COMPANY]->(c:OdooCustomer)
+    WHERE c.name = $company
+    OPTIONAL MATCH (c)-[:SUBSIDIARY_OF]->(p:OdooCustomer)
+    OPTIONAL MATCH path = (c)-[:HAS_SUBSIDIARY*1..4]->(s:OdooCustomer)
+    RETURN c.id                AS companyId,
+           c.name              AS company,
+           c.website           AS website,
+           p.id                AS parentId,
+           p.name              AS parent,
+           s.id                AS subsidiaryId,
+           s.name              AS subsidiary,
+           s.website           AS subsidiaryWebsite,
+           s.relationship      AS subsidiaryRelationship,
+           coalesce(length(path), 0) AS depth,
+           [n IN coalesce(nodes(path), [c]) | n.name] AS chain
+    ORDER BY company, depth, subsidiary
+
+- name: OdooCompanyGroupById
+  description: >-
+    A company with its parent and every subsidiary, by Odoo partner id. The same answer as
+    OdooCompanyGroup — its subsidiaries up to four levels down, not deeper — for one id. Use it when the id is known (from
+    another row's companyId or customerId): an id names exactly one company.
+  outputLabel: OdooCompanyGroupRow
+  params:
+    companyId:
+      type: string
+      required: true
+      description: "The company's Odoo partner id, e.g. '42'."
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_COMPANY]->(c:OdooCustomer)
+    WHERE c.id = $companyId
+    OPTIONAL MATCH (c)-[:SUBSIDIARY_OF]->(p:OdooCustomer)
+    OPTIONAL MATCH path = (c)-[:HAS_SUBSIDIARY*1..4]->(s:OdooCustomer)
+    RETURN c.id                AS companyId,
+           c.name              AS company,
+           c.website           AS website,
+           p.id                AS parentId,
+           p.name              AS parent,
+           s.id                AS subsidiaryId,
+           s.name              AS subsidiary,
+           s.website           AS subsidiaryWebsite,
+           s.relationship      AS subsidiaryRelationship,
+           coalesce(length(path), 0) AS depth,
+           [n IN coalesce(nodes(path), [c]) | n.name] AS chain
+    ORDER BY depth, subsidiary
+
+- name: OdooCompanyGroupSearch
+  description: >-
+    Company groups for every company whose name contains a fragment. An explicit search, ignoring
+    case, for when the exact name is not known ("groups of companies called something like
+    'acme'"); four levels down at most. Each matching company answers with its own group, so 'Acme' answers
+    'Acme Corp' and 'Acme Freight' alike; check the company column before reading a group as the
+    one meant. When the exact name is known, OdooCompanyGroup answers that company alone.
+  outputLabel: OdooCompanyGroupRow
+  params:
+    nameContains:
+      type: string
+      required: true
+      description: "Part of a company name, any case. Every company whose name contains it is answered."
+  cypher: |
+    MATCH (b:OdooBook {scope:'all'})-[:HAS_COMPANY]->(c:OdooCustomer)
+    WHERE toLower(c.name) CONTAINS toLower($nameContains)
+    OPTIONAL MATCH (c)-[:SUBSIDIARY_OF]->(p:OdooCustomer)
+    OPTIONAL MATCH path = (c)-[:HAS_SUBSIDIARY*1..4]->(s:OdooCustomer)
+    RETURN c.id                AS companyId,
+           c.name              AS company,
+           c.website           AS website,
+           p.id                AS parentId,
+           p.name              AS parent,
+           s.id                AS subsidiaryId,
+           s.name              AS subsidiary,
+           s.website           AS subsidiaryWebsite,
+           s.relationship      AS subsidiaryRelationship,
+           coalesce(length(path), 0) AS depth,
+           [n IN coalesce(nodes(path), [c]) | n.name] AS chain
+    ORDER BY company, depth, subsidiary

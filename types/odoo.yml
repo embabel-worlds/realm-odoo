@@ -6,15 +6,28 @@
 #   MATCH (q:OdooStagePipeline {stage:'Proposition'})-[:HAS_LEAD]->(l:OdooLead)
 #   OPTIONAL MATCH (l)-[:LEAD_OF]->(c:OdooCustomer)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)
 #   RETURN c.name, l.name, l.expected_revenue, i.name, i.amount_residual
+#
+# TWO CLOCKS. Odoo keeps two kinds of date, and a question has to say which it means:
+#   - the SYSTEM clock — create_date, date_closed, date_last_stage_update, a message's date:
+#     when Odoo was told, stamped by the server, in UTC, as 'YYYY-MM-DD HH:MM:SS'. On a book that
+#     was imported or seeded these are the load time, not when the deal really began;
+#   - BUSINESS dates — date_deadline, invoice_date, invoice_date_due: what a person agreed or
+#     typed, as 'YYYY-MM-DD' with no time and no zone.
+# Compare either against 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS' literals: those reach Odoo as
+# filters, and they sort against the stored strings exactly. An ISO 'T' does not
+# ('2026-10-22T09:00' sorts after every '2026-10-22 …'). `date()` in a query is the APPLIANCE's
+# day, which is not necessarily the business's.
 
 - name: OdooStagePipeline
   visibility: internal
   description: >-
-    The open pipeline at one CRM stage, pinned by the stage's NAME exactly as Odoo shows it
-    ('New', 'Qualified', 'Proposition', 'Won'). Pin it with a literal and traverse HAS_LEAD;
-    it is not stored and does not need to exist.
+    The open pipeline at one CRM stage, pinned by the stage's NAME exactly as Odoo shows it.
+    Stages are each business's own; Odoo's defaults are 'New', 'Qualified', 'Proposition' and
+    'Won'. Pin it with a literal and traverse HAS_LEAD: MATCH (q:OdooStagePipeline
+    {stage:'Proposition'})-[:HAS_LEAD]->(l). It is not stored and does not need to exist. The
+    stages in use are the distinct `stage` values of the leads.
   properties:
-    stage: { metadata: { identity: "true" } }
+    stage: { description: "The stage name, exactly as Odoo shows it (case and spelling matter). Odoo's defaults are 'New', 'Qualified', 'Proposition' and 'Won'; each business has its own.", metadata: { identity: "true" } }
 
 - name: OdooLead
   visibility: internal
@@ -23,28 +36,53 @@
   # asked about opportunities is answered here without naming Odoo.
   parents: [Opportunity]
   description: >-
-    A CRM lead/opportunity. expected_revenue and probability are Odoo's own pipeline figures;
-    partner_id is the linked customer (bare id) when the lead has been connected to one.
+    One Odoo CRM deal (crm.lead), identified by `id`, open or decided: status is open (Odoo's
+    won_status 'pending'), won, or lost — a lost deal is ARCHIVED (active=false).
+    expected_revenue/amount are in `currency`, major units. probability is a 0–1 fraction;
+    probabilityPercent is Odoo's 0–100.
+    Doors from OdooBook: HAS_OPEN_LEAD (the pipeline: active, under 100%), HAS_ANY_LEAD (every
+    deal; what a bare MATCH (o:Opportunity) takes), HAS_DECIDED_LEAD (won and lost only, cached
+    an hour). From a customer: HAS_OPPORTUNITY (all of its deals). One deal by id is one call:
+    MATCH (b:OdooBook)-[:HAS_ANY_LEAD]->(l:OdooLead) WHERE l.id = $id. Filters on status, stage,
+    ownerName, partner_id, type, the amounts, probabilityPercent and the dates are applied by
+    Odoo, not after the fetch. Leads with no customer are not reachable here.
+    Example — this quarter's wins by salesperson: MATCH (b:OdooBook)-[:HAS_DECIDED_LEAD]->(l)
+    WHERE l.status = 'won' AND l.closeOn >= '2026-10-01' RETURN l.ownerName, count(l),
+    sum(l.amount).
   properties:
-    id: { metadata: { identity: "true" } }
-    name: "The opportunity's title."
-    partner_id: "Linked partner id (Odoo: 'Contact' — usually set when converting the lead)."
-    expected_revenue: "Expected Revenue, in company currency."
-    probability: "Probability percent; 100 on won, 0 on lost."
-    email_from: "Email of the contact the lead came from."
-    stage_id: "Stage id. The stage's NAME is `stage`."
-    create_date: "When the lead was created."
-    date_closed: "When the opportunity was won or lost (set on close)."
-    won_status: "won, lost or pending — Odoo's own words; pending means still open."
-    date_deadline: "Expected closing date."
-    user_id: "The salesperson's user id. Their NAME is `ownerName`."
-    active: "False once the opportunity is archived, which is how Odoo marks a LOST deal."
+    id: { description: "Odoo crm.lead id. Write it quoted ('123'); Odoo is asked for the number.", metadata: { identity: "true" } }
+    name: "The deal's title, as Odoo shows it. Same as `title`."
+    title: "The deal's title (the vocabulary's name for `name`)."
+    partner_id: "The customer's partner id (bare). LEAD_OF reaches the customer itself."
+    type: "Odoo's own split: 'opportunity' (in the pipeline) or 'lead' (not yet qualified). Every door carries both; filter on it to mean one."
+    expected_revenue: { type: float, description: "Expected revenue, in the company currency (`currency`), major units: 12500.0 is 12,500.00. Odoo's own figure, never recomputed." }
+    amount: { type: float, description: "The deal value (the vocabulary's name for expected_revenue), in major units of `currency`." }
+    currency: "ISO 4217 code of the company currency every amount here is in, e.g. 'USD'."
+    probability: { type: float, description: "Win probability as a FRACTION 0–1 (the vocabulary's meaning): 0.65 is 65%. 1.0 on won, 0 on lost. Not filtered by Odoo — filter on probabilityPercent." }
+    probabilityPercent: { type: float, description: "Win probability as Odoo states it, 0–100: 65 is 65%. 100 on won, 0 on lost. `l.probabilityPercent >= 60` is applied by Odoo." }
+    priority: "Odoo's priority code as stored: '0' low, '1' medium, '2' high, '3' very high (the stars on a card). Read priorityLabel."
+    priorityLabel: "Priority in words: low, medium, high or very_high. Filtered in the graph; Odoo is asked for nothing on it."
+    email_from: "Email of the contact the lead came from, as typed."
+    stage_id: "Stage id (bare). The stage's NAME is `stage`."
+    stage: "Pipeline stage by name, as Odoo shows it: each business has its own; Odoo's defaults are 'New', 'Qualified', 'Proposition', 'Won'. Filtered by Odoo."
+    won_status: "Odoo's verdict: 'pending' (still open), 'won', or 'lost'. A deal archived without being lost stays 'pending' but is not in the pipeline (active=false)."
+    status: "'open', 'won' or 'lost' (won_status, 'pending' read as 'open'). Odoo applies 'won'/'lost'; for open deals use HAS_OPEN_LEAD or won_status = 'pending'."
+    active: "False once the deal is archived — which is how Odoo marks a LOST deal, and which hides it from Odoo's own lists. The pipeline doors read active deals only."
+    create_date: "SYSTEM clock: when the record was created in Odoo, UTC, 'YYYY-MM-DD HH:MM:SS'. On an imported or seeded book this is the load time, not when the deal began."
+    date_closed: "SYSTEM clock: when the deal was marked won or lost, UTC, 'YYYY-MM-DD HH:MM:SS'. Null while open. The close date for 'won last quarter'."
+    date_deadline: "BUSINESS date: the expected closing date the salesperson set, 'YYYY-MM-DD', no zone. Null when nobody set one."
+    date_last_stage_update: "SYSTEM clock: when the deal last moved stage, UTC, 'YYYY-MM-DD HH:MM:SS'. How long a deal has sat still."
+    closeOn: "'YYYY-MM-DD': date_deadline while open; the UTC day of date_closed once decided. Odoo applies a window on it through HAS_DECIDED_LEAD."
+    lostReason: "Why a lost deal was lost, as Odoo names the reason ('Too expensive'). Only through HAS_DECIDED_LEAD; null when none was given."
+    user_id: "The salesperson's Odoo user id (bare). Their NAME is `ownerName`."
+    ownerName: "The salesperson who owns the deal, by name. `l.ownerName = $name` is applied by Odoo."
+    sourceUrl: "Opens this deal in Odoo."
     stageKey: "Set only on a lead reached through OdooStagePipeline (the stage it was fetched under); null otherwise. For a lead's stage read `stage`."
     scopeKey: "Echo of the book scope this lead was fetched under."
   virtualJoins:
     - { anchorLabel: OdooBook, relationship: HAS_OPEN_LEAD, keyField: scope,
         recordKeyField: scopeKey, producer: leadsOpenAll, maxFanoutTotal: 50000,
-        description: "Every open opportunity on the book, any stage." }
+        description: "The open pipeline: every active deal under 100% probability, any stage, biggest expected revenue first. Odoo applies the deal filters, so `WHERE l.stage = 'Proposition'` or `l.ownerName = '…'` reads only those." }
     # The same door WIDENED to closed deals. HAS_OPEN_LEAD is the pipeline and stops at
     # what is still in play — 1,200 of 2,000 on this book — so a per-account question that
     # counts what was WON or LOST cannot be answered through it, and had to fan out one
@@ -54,17 +92,22 @@
     # means it ("open or decided"); the pipeline is `WHERE o.status = 'open'`.
     - { anchorLabel: OdooBook, relationship: HAS_ANY_LEAD, keyField: scope,
         recordKeyField: scopeKey, producer: leadsAll, maxFanoutTotal: 50000, implicitDoor: true,
-        description: "Every opportunity on the book — open, won and lost. Read won_status to tell them apart." }
+        description: "Every deal on the book — open, won AND lost. NOT the pipeline: a pipeline total (by stage, by owner, overall) is HAS_OPEN_LEAD, or the OdooPipelineByStage view. `WHERE l.status = 'won'` is applied by Odoo." }
+    # Won and lost only, cached an hour: a decided deal almost never changes. The door for wins,
+    # losses and win rates over a window, which no longer re-read the open pipeline to find them.
+    - { anchorLabel: OdooBook, relationship: HAS_DECIDED_LEAD, keyField: scope,
+        recordKeyField: scopeKey, producer: leadsDecidedAll, maxFanoutTotal: 50000,
+        description: "Every DECIDED deal — won or lost — newest decision first. The door for 'biggest win this quarter', 'what did we lose and why' and win rates: `WHERE l.status = 'won' AND l.closeOn >= '2026-10-01'` is one filtered read." }
     - { anchorLabel: OdooStagePipeline, relationship: HAS_LEAD, keyField: stage,
         recordKeyField: stageKey, producer: leadsByStage,
-        description: "Every active lead sitting at this pipeline stage." }
+        description: "Every active deal sitting at this pipeline stage, open or won." }
     # EVERY deal with the customer: open, won and lost. The two doors above are the pipeline;
     # this is the history, and a question about an account needs the history.
     # materializedKeyField: once the book's leads are swept, a customer's opportunities are the swept
     # leads whose partner_id is its id — no fetch per customer (embabel/me#1489).
     - { anchorLabel: OdooCustomer, relationship: HAS_OPPORTUNITY, keyField: id,
         recordKeyField: partner_id, producer: leadsByPartner, materializedKeyField: partner_id,
-        description: "Every opportunity with this customer — open, won or lost." }
+        description: "Every deal with this customer — open, won or lost. One call for any number of customers; a filter on status, stage or dates is applied by Odoo." }
 
 - name: OdooCustomer
   visibility: internal
@@ -73,17 +116,27 @@
   # TRACKED_AS leads back here, and from here to Odoo's opportunities, contacts and notes.
   parents: [CrmAccount]
   description: >-
-    A partner (res.partner) — a customer, contact or company. email is the bridge field: on a
-    Me appliance this is where a Person-spine join would anchor.
+    One Odoo partner (res.partner), identified by `id`: a COMPANY (is_company 'true') or a
+    PERSON/address ('false'). parent_id means two things: on a company its parent company, on a
+    person their employer. One company by name is one call: MATCH
+    (b:OdooBook)-[:HAS_COMPANY]->(c) WHERE c.name = $name (exact, case and all).
+    Which door: HAS_CUSTOMER — partners we have sold to or invoiced (customer_rank > 0), companies
+    and people alike; HAS_COMPANY — every company, prospects included (what a bare MATCH
+    (k:CrmAccount) takes); HAS_PARTNER — companies AND people. Archived partners are reached by
+    none. Up the group: SUBSIDIARY_OF (one parent per hop, companies only); down: HAS_SUBSIDIARY.
+    commercialPartnerId is the company a person trades under (a company's own id on a company).
+    `website` keys the business vocabulary's CustomerAccount. Filters on name, email, website,
+    city, country, industry, ownerName, relationship 'customer', is_company and parent_id are
+    applied by Odoo; `toLower(c.name) CONTAINS $fragment` is too (case-blind).
   properties:
-    id: { metadata: { identity: "true" } }
-    name: { description: "Display name.", metadata: { canonical: name } }
-    email: "Email address."
-    phone: "Phone."
-    city: "City."
-    country_id: "Country id. The country's NAME is `country`."
-    country: "The country, by name."
-    is_company: "True for companies, false for individuals."
+    id: { description: "Odoo partner id. Write it quoted ('42'); Odoo is asked for the number.", metadata: { identity: "true" } }
+    name: { description: "Display name, exactly as Odoo holds it. `c.name = $name` is an exact, case-sensitive match.", metadata: { canonical: name } }
+    email: { joinKey: "email", description: "Email address, as typed in Odoo. Compare without case (`toLower(c.email) = …`) to match another system's." }
+    phone: "Phone number, as typed in Odoo (no normalised format)."
+    city: "City of the partner's address, as typed in Odoo."
+    country_id: "Country id (bare). The country's NAME is `country`."
+    country: "The country, by name ('Australia')."
+    is_company: "Whether the partner is a company: the STRING 'true' for a company, 'false' for a person or an address. Write `c.is_company = 'true'`."
     # What identifies the COMPANY, as opposed to `id`, which identifies Odoo's record of it and
     # is what every join in this realm keys on. The spine normalizes; this realm sends the URL
     # exactly as Odoo holds it.
@@ -94,23 +147,26 @@
     # account no CRM record keys keeps them empty rather than borrow billing's guess.
     website:
       hub: CustomerAccount
-      description: "Company website URL, as Odoo holds it. A domain identifies a company; a name does not. Odoo spells 'unset' as FALSE, which keys nothing."
+      description: "Company website URL as Odoo holds it; keys the vocabulary's CustomerAccount by its registrable domain. A domain identifies a company, a name does not."
       metadata: { canonical: website }
-    industry_id: "Industry id. Its NAME is `industry`."
+    industry_id: "Industry id (bare). Its NAME is `industry`."
     industry: { description: "Industry, as Odoo names it ('Manufacturing').", metadata: { canonical: industry } }
-    user_id: "The salesperson's user id. Their NAME is `ownerName`."
+    user_id: "The salesperson's Odoo user id (bare). Their NAME is `ownerName`."
     ownerName: { description: "The salesperson who owns the account, by name.", metadata: { canonical: ownerName } }
     # Odoo's own measure: customer_rank counts the sales and invoices made out to the partner,
     # so above zero they have bought from us. A supplier we have never sold to is neither.
     relationship:
-      description: "customer (Odoo has sold to or invoiced them), prospect (not yet), or other (a supplier we have never sold to)."
+      description: "customer (sold to or invoiced: customer_rank > 0), prospect (not yet, not a supplier), or other (a supplier never sold to). Odoo applies 'customer'."
       metadata: { canonical: relationship }
     sourceUrl: { description: "Opens this partner in Odoo.", metadata: { canonical: sourceUrl } }
+    parent_id: "Odoo's parent_id (bare id), which means two things: on a company its parent company, on a person the company they work at. Null when unset."
+    parentCompanyId: "The parent company's partner id — parent_id, but only on a company record; null on a person and on a company with no parent. What SUBSIDIARY_OF follows."
+    commercialPartnerId: "The company a person or address trades under (a company's own id on a company). Rolls contacts up; who OWNS a company is parentCompanyId."
     scopeKey: "Echo of the book scope this customer was fetched under."
   virtualJoins:
     - { anchorLabel: OdooBook, relationship: HAS_CUSTOMER, keyField: scope,
         recordKeyField: scopeKey, producer: customersAll, maxFanoutTotal: 50000,
-        description: "Every customer on the book (customer_rank > 0)." }
+        description: "Every partner we have sold to or invoiced (customer_rank > 0) — mostly companies, and any person invoiced directly." }
     # Prospects too. HAS_CUSTOMER is who has BOUGHT; an account-level question is as often about
     # a company sales is still courting, and it has to be an account before anything can be
     # said about it.
@@ -119,7 +175,7 @@
     # company as the CRM knows it", prospects included, which is this one.
     - { anchorLabel: OdooBook, relationship: HAS_COMPANY, keyField: scope,
         recordKeyField: scopeKey, producer: companiesAll, maxFanoutTotal: 50000, implicitDoor: true,
-        description: "Every company the CRM knows — customers and prospects alike." }
+        description: "Every company the CRM knows — customers and prospects alike. The door for ONE company: `WHERE c.name = $name` or `c.id = $id` is one call." }
     # BOTH SIDES. HAS_CUSTOMER and HAS_COMPANY each reach companies only; this reaches the
     # PEOPLE too, which is what a question about notes needs — most chatter is written on a
     # contact, not on the company record. Split them afterwards on `is_company`, which Odoo
@@ -131,9 +187,13 @@
     # attendee partner, so "who am I meeting and what do they owe us" is one traversal.
     - { anchorLabel: OdooMeeting, relationship: MEETING_WITH, keyField: partner_ids,
         recordKeyField: id, producer: customersById,
-        description: "The partners attending this meeting." }
+        description: "The partners attending this meeting — companies and people." }
     - { anchorLabel: OdooLead, relationship: LEAD_OF, keyField: partner_id, recordKeyField: id,
-        producer: customersById, description: "The customer an opportunity belongs to." }
+        producer: customersById, description: "The customer a deal is with: its partner, usually the company. One batched call for any number of deals." }
+    # From an invoice to whoever it is made out to. One batched call for any number of invoices,
+    # so "the 10 biggest unpaid invoices and who owes them" reads 10 partners, not the book's.
+    - { anchorLabel: OdooInvoice, relationship: INVOICE_OF, keyField: partner_id, recordKeyField: id,
+        producer: customersById, description: "The partner an invoice is made out to — usually the company, sometimes a person there." }
     # The vocabulary's FollowUp edge. Keyed on `partnerId`, which is the activity's res_id ONLY when
     # it hangs on a partner: res_id alone is an id in whatever model res_model names, and keyed on
     # it a follow-up on deal 12242 would be read as one on partner 12242.
@@ -153,113 +213,156 @@
     - { anchorLabel: CustomerAccount, relationship: TRACKED_AS, keyField: accountKey,
         recordKeyField: website, producer: customersByWebsite, ridesHub: true,
         description: "Odoo's record of a customer account, matched on the company's website." }
+    # THE COMPANY HIERARCHY, the vocabulary's two edges between CrmAccounts. Up is one parent per
+    # hop and keys on parentCompanyId, which only a company carries (see producers: THE COMPANY
+    # HIERARCHY), so `-[:SUBSIDIARY_OF*1..4]->` walks to the top and never from a person to their
+    # employer. Down fans out, and is named apart rather than written as `<-[:SUBSIDIARY_OF]-`:
+    # a walk up then never asks, at each hop, for every sibling of the company it passed.
+    # commercial_partner_id is not followed here: on a company it is the company itself.
+    - { anchorLabel: OdooCustomer, relationship: SUBSIDIARY_OF, keyField: parentCompanyId,
+        recordKeyField: id, producer: customersById,
+        description: "The company this one belongs to — its parent company in Odoo. None when it has no parent. `-[:SUBSIDIARY_OF*1..4]->` walks to the top of the group, one call per level." }
+    - { anchorLabel: OdooCustomer, relationship: HAS_SUBSIDIARY, keyField: id,
+        recordKeyField: parentCompanyId, producer: subsidiariesByParent,
+        description: "The companies Odoo files under this one as their parent — its direct subsidiaries. `-[:HAS_SUBSIDIARY*1..4]->` reaches the whole group below it, one call per level." }
 
 - name: OdooInvoice
   visibility: internal
-  description: "A posted, not-fully-paid customer invoice. amount_residual is what is still owed; invoice_date_due is when it was due."
+  description: >-
+    One posted Odoo customer invoice (account.move, out_invoice), identified by `id`, not yet
+    fully paid: payment_state 'not_paid' or 'partial'. amount_residual is what is still owed,
+    amount_total the total, both in `currency` (ISO code), major units. invoice_date_due is the BUSINESS due date
+    ('YYYY-MM-DD'); overdue means due before today. Drafts, cancelled and paid invoices and credit
+    notes are not here. Doors: HAS_UNPAID_INVOICE from OdooBook (all, largest debt first) or from
+    a customer; INVOICE_OF to the partner it is made out to. Filters on partner_id, amounts, dates,
+    payment_state and currency are applied by Odoo. Example — overdue by more than 30 days:
+    MATCH (b:OdooBook)-[:HAS_UNPAID_INVOICE]->(i) WHERE i.invoice_date_due < '2026-10-25'
+    RETURN i.name, i.amount_residual, i.currency.
   properties:
-    id: { metadata: { identity: "true" } }
-    name: "Invoice number."
-    partner_id: "Customer id."
-    amount_total: "Invoice total."
-    amount_residual: "Amount still owed."
-    invoice_date_due: "Due date."
-    payment_state: "not_paid or partial."
-    partnerKey: "Echo of the partner id this invoice was fetched under."
+    id: { description: "Odoo account.move id. Write it quoted ('512').", metadata: { identity: "true" } }
+    name: "Invoice number ('INV/2026/00042'). Odoo's demo data repeats some numbers; join on id, never on this."
+    partner_id: "The partner the invoice is made out to (bare id) — usually the company, sometimes a person there. INVOICE_OF reaches it."
+    amount_total: { type: float, description: "Invoice total, tax included, in `currency`, major units." }
+    amount_residual: { type: float, description: "What is still owed on it, in `currency`, major units. Equals amount_total when nothing has been paid." }
+    currency: "ISO 4217 code of the invoice's currency ('USD'). Sum amounts only within one currency."
+    currency_id: "Currency id (bare). Its code is `currency`."
+    invoice_date: "BUSINESS date the invoice was issued, 'YYYY-MM-DD'."
+    invoice_date_due: "BUSINESS date payment is due, 'YYYY-MM-DD'. Overdue is `i.invoice_date_due < '<today>'`, applied by Odoo."
+    payment_state: "'not_paid' (nothing received) or 'partial' (part received). Paid invoices are not reachable here."
+    sourceUrl: "Opens this invoice in Odoo."
+    partnerKey: "The partner id this invoice is attributed to — the same as partner_id."
     scopeKey: "Echo of the book scope this invoice was fetched under."
   virtualJoins:
     - { anchorLabel: OdooBook, relationship: HAS_UNPAID_INVOICE, keyField: scope,
         recordKeyField: scopeKey, producer: invoicesUnpaidAll, maxFanoutTotal: 50000,
-        description: "Every posted, unpaid customer invoice on the book." }
+        description: "Every posted, unpaid customer invoice on the book, largest amount still owed first — so a top-N by amount_residual reads one page." }
     # materializedKeyField: once the book's unpaid invoices are swept (HAS_UNPAID_INVOICE from
     # OdooBook), a customer's are the swept invoices whose partner_id is its id — no fetch per
     # customer, which is refused above maxAnchors on a book of thousands (embabel/me#1489).
     - { anchorLabel: OdooCustomer, relationship: HAS_UNPAID_INVOICE, keyField: id,
         recordKeyField: partnerKey, producer: unpaidInvoicesByPartner, materializedKeyField: partner_id,
-        description: "Posted customer invoices not fully paid." }
+        description: "This customer's posted invoices not fully paid. One call for any number of customers." }
     # Same records, anchored one hop EARLIER: lead and invoice both carry partner_id, so the
     # pipeline question reaches invoices at depth 2 (a branch off the lead) instead of a
     # depth-3 chain — which the engine currently loses silently (platform issue; see realm
     # notes). Same producer, same filter, stated twice on purpose.
     - { anchorLabel: OdooLead, relationship: CUSTOMER_OWES, keyField: partner_id,
         recordKeyField: partnerKey, producer: unpaidInvoicesByPartner,
-        description: "Unpaid invoices of the customer this lead belongs to." }
+        description: "Unpaid invoices of the customer this deal is with." }
 
 - name: OdooOrder
   visibility: internal
-  description: "A sales order or quotation. state is draft/sent (quotation), sale (confirmed), done, or cancel."
+  description: >-
+    One Odoo sales order or quotation (sale.order), identified by `id`. state: 'draft'
+    (quotation), 'sent' (quotation sent), 'sale' (confirmed), 'done' (locked), 'cancel'. amount_total is in `currency`,
+    major units. date_order is the order date (UTC). Reached from a customer by HAS_ORDER, any
+    state; filter on state, amount_total and date_order is applied by Odoo.
   properties:
-    id: { metadata: { identity: "true" } }
-    name: "Order reference."
-    partner_id: "Customer id."
-    amount_total: "Order total."
-    state: "draft, sent, sale, done, or cancel."
-    date_order: "Order date."
-    partnerKey: "Echo of the partner id this order was fetched under."
+    id: { description: "Odoo sale.order id.", metadata: { identity: "true" } }
+    name: "Order reference ('S00042')."
+    partner_id: "Customer id (bare)."
+    amount_total: { type: float, description: "Order total, tax included, in `currency`, major units." }
+    currency: "ISO 4217 code of the order's currency."
+    state: "'draft' or 'sent' (still a quotation), 'sale' (confirmed), 'done' (locked), 'cancel' (cancelled)."
+    date_order: "Order date, UTC, 'YYYY-MM-DD HH:MM:SS' — the quotation date until confirmed, then the confirmation date."
+    sourceUrl: "Opens this order in Odoo."
+    partnerKey: "The partner id this order is attributed to — the same as partner_id."
   virtualJoins:
     - { anchorLabel: OdooCustomer, relationship: HAS_ORDER, keyField: id,
         recordKeyField: partnerKey, producer: ordersByPartner,
-        description: "Sales orders and quotations, any state." }
+        description: "This customer's sales orders and quotations, any state, newest first. One call for any number of customers." }
 
 - name: OdooBook
   visibility: internal
   description: >-
-    The whole Odoo book, pinned by the LITERAL scope 'all' — always write
-    MATCH (b:OdooBook {scope:'all'}) and traverse. HAS_CUSTOMER reaches every customer,
-    HAS_UNPAID_INVOICE every posted unpaid customer invoice, HAS_OPEN_LEAD every open
-    opportunity. This is the door for questions about the sets: how many customers, who
-    owes most, total pipeline. It is not stored and does not need to exist.
+    The whole Odoo book, pinned by the LITERAL scope 'all' — write MATCH (b:OdooBook
+    {scope:'all'}) (or bare: it defaults) and traverse. The door for questions about the SETS:
+    HAS_CUSTOMER, HAS_COMPANY, HAS_PARTNER, HAS_OPEN_LEAD, HAS_ANY_LEAD, HAS_DECIDED_LEAD,
+    HAS_UNPAID_INVOICE, HAS_MEETING, HAS_ACTIVITY, HAS_MESSAGE. It is not stored and does not need
+    to exist.
   properties:
-    scope: { metadata: { identity: "true", default: "all" } }
+    scope: { description: "Always 'all'.", metadata: { identity: "true", default: "all" } }
 
-# A chatter message on an opportunity. Body arrives as HTML, as Odoo stores it — a consumer
-# doing judgment (sentiment, classification) should strip tags first, not ask the model to.
 - name: OdooContact
   visibility: internal
   userAnchor: false
   parents: [AccountContact]
   description: >-
-    A person at a customer company (a res.partner whose parent is the company), and an
-    AccountContact of the business vocabulary.
+    One PERSON at a customer company, identified by `id` (an Odoo res.partner with is_company
+    false, filed under the company by parent_id) — the business vocabulary's AccountContact.
+    email is lower-cased: that is how a contact is recognised as a support requester. Reached from a
+    company by HAS_ACCOUNT_CONTACT; subsidiaries are never returned here (they are
+    HAS_SUBSIDIARY). Archived people are not reached.
   properties:
     id: { identity: true, description: "Odoo partner id." }
     name: "Full name."
-    email: "Email address."
-    function: "Job title."
-    phone: "Phone."
+    email: { joinKey: "email", description: "Email address, LOWER CASE — the key a support requester is matched on. `ct.email = $email` is asked of Odoo ignoring case." }
+    function: "Job title, as typed in Odoo."
+    jobTitle: "Job title (the vocabulary's name for `function`)."
+    phone: "Phone number, as typed in Odoo (no normalised format)."
     parent_id: "The company's partner id."
+    sourceUrl: "Opens this person in Odoo."
   virtualJoins:
     - { anchorLabel: OdooCustomer, relationship: HAS_ACCOUNT_CONTACT, keyField: id,
         recordKeyField: parent_id, producer: contactsByCompany,
-        description: "The people Odoo knows at this company." }
+        description: "The people Odoo files under this company — never its subsidiaries. One call for any number of companies." }
 
+# A chatter message. Body arrives as HTML, as Odoo stores it — a consumer doing judgment
+# (sentiment, classification) should strip tags first, not ask the model to.
 - name: OdooMessage
   userAnchor: false
   # An AccountNote of the business vocabulary: what our own people wrote down, wherever in
   # Odoo they wrote it — on the company, on a person there, or on a deal. What the CRM
   # BELIEVES lives in these, which is why "is this problem mentioned anywhere?" reads them.
   parents: [AccountNote]
-  description: |
-    An email or comment from an opportunity's chatter thread, newest state of the deal in
-    the participants' own words. Tracking entries are excluded at the producer.
+  description: >-
+    One note or email in Odoo's chatter (mail.message), identified by `id`, written on a deal
+    (model 'crm.lead') or on a company or person ('res.partner'); tracking entries like "Stage
+    changed" are excluded. body is HTML as Odoo stores it. date is the SYSTEM clock, UTC; writtenOn its
+    day. Doors: HAS_MESSAGE/HAS_NOTE from a deal, HAS_NOTE from a company or contact, and
+    HAS_MESSAGE/HAS_NOTE from OdooBook for the whole book (pick a side with `n.model`). Filters on
+    model, res_id, message_type, author and the dates are applied by Odoo, newest first.
   properties:
     id:
       identity: true
       description: "Odoo mail.message id."
-    body: "Message body, as HTML."
-    date: "When it was sent (UTC)."
+    body: "Message body, as HTML. Strip tags before judging it."
+    date: "SYSTEM clock: when it was posted, UTC, 'YYYY-MM-DD HH:MM:SS'. A back-dated import carries the date it was written."
+    writtenOn: "The UTC day it was posted, 'YYYY-MM-DD' (the vocabulary's AccountNote.writtenOn)."
     subject: "Subject, when the message was an email."
-    message_type: "comment (internal note / log) or email."
-    res_id: "The id of the record it was written on."
-    author_id: "The author's partner id. Their NAME is `authorName`."
+    message_type: "'comment' (an internal note or a logged message) or 'email'."
+    res_id: "The id of the record it was written on — in the model `model` names."
+    author_id: "The author's partner id (bare). Their NAME is `authorName`."
     authorName: "Who wrote it, by name."
-    leadKey: "The deal this message is on: the lead it was fetched under, or its res_id when the book sweep read a crm.lead message."
+    author: "Who wrote it, by name (the vocabulary's AccountNote.author)."
+    about: "'opportunity' when the note is on a deal. Set on a deal's own thread only."
+    sourceUrl: "Opens the record the note is on."
+    leadKey: "The deal this message is on: its res_id when it is a crm.lead message."
     partnerKey: "The company or contact this message is on: its res_id when it is a res.partner message."
     # WHICH KIND of record `res_id` points at — `res.partner` (a company or a contact) or
-    # `crm.lead` (a deal). Only the book sweep carries it: the per-anchor doors already know,
-    # because each pins one `model` in its own domain. A book-wide reader does not, and without
-    # it a note on a deal and a note on a company are indistinguishable once fetched.
-    model: "The Odoo model `res_id` refers to: 'res.partner' or 'crm.lead'."
+    # `crm.lead` (a deal). Without it a note on a deal and a note on a company are
+    # indistinguishable once fetched.
+    model: "The Odoo model `res_id` refers to: 'res.partner' (a company or person) or 'crm.lead' (a deal)."
     scopeKey: "Echo of the book scope this message was fetched under."
   virtualJoins:
     # THE BOOK'S WHOLE CHATTER, one sweep. The anchored joins below ask per record, which is right
@@ -269,7 +372,7 @@
     # joins `n.res_id` to the customer or lead sweep graph-side, which costs nothing.
     - { anchorLabel: OdooBook, relationship: HAS_MESSAGE, keyField: scope,
         recordKeyField: scopeKey, producer: messagesAll, maxFanoutTotal: 50000,
-        description: "Every note and email in the book's chatter, on companies, contacts and deals alike — the door for notes questions asked across accounts rather than about one." }
+        description: "Every note and email in the book's chatter, on companies, contacts and deals alike, newest first — the door for notes questions asked across accounts rather than about one." }
     # implicitDoor: a bare `MATCH (n:AccountNote)` takes this door. HAS_MESSAGE is the same sweep,
     # and two doors onto one population would otherwise leave the engine refusing to pick.
     - { anchorLabel: OdooBook, relationship: HAS_NOTE, keyField: scope,
@@ -277,13 +380,13 @@
         description: "The same sweep, by the business vocabulary's name for it." }
     - { anchorLabel: OdooLead, relationship: HAS_MESSAGE, keyField: id, recordKeyField: leadKey,
         producer: messagesByLead, materializedKeyField: leadKey,
-        description: "The opportunity's chatter thread — recent interactions on the deal." }
+        description: "The deal's chatter thread, newest first — recent interactions on the deal. One call for any number of deals." }
     - { anchorLabel: OdooLead, relationship: HAS_NOTE, keyField: id, recordKeyField: leadKey,
         producer: messagesByLead, materializedKeyField: leadKey,
         description: "What was written on the deal (the same thread, by the vocabulary's name)." }
     - { anchorLabel: OdooCustomer, relationship: HAS_NOTE, keyField: id, recordKeyField: res_id,
         producer: messagesByPartner, materializedKeyField: partnerKey,
-        description: "What was written on the company's own record." }
+        description: "What was written on the company's own record (not on the people there, nor its deals)." }
     - { anchorLabel: OdooContact, relationship: HAS_NOTE, keyField: id, recordKeyField: res_id,
         producer: messagesByPartner, materializedKeyField: partnerKey,
         description: "What was written on a contact's record." }
@@ -294,23 +397,31 @@
   userAnchor: false
   # A Meeting of the business vocabulary; MEETING_WITH (declared on OdooCustomer) is its edge.
   parents: [Meeting]
-  description: |
-    A meeting from the Odoo calendar, with its attendee partner ids. Times are UTC as Odoo
-    stores them.
+  description: >-
+    One meeting in the Odoo calendar (calendar.event), identified by `id`, with its attendee
+    partner ids. start and stop are UTC, 'YYYY-MM-DD HH:MM:SS' — convert before calling one "this afternoon"; for an
+    all-day event read only the day (startsOn). Reached by HAS_MEETING from OdooBook, earliest
+    first; MEETING_WITH reaches the attendees. A window on start or startsOn is applied by Odoo:
+    WHERE m.start >= '2026-11-24'.
   properties:
     id:
       identity: true
       description: "Odoo calendar.event id."
     name: "Meeting subject."
-    start: "Start (UTC)."
-    stop: "End (UTC)."
+    title: "Meeting subject (the vocabulary's name)."
+    start: "Start, UTC, 'YYYY-MM-DD HH:MM:SS'."
+    stop: "End, UTC, 'YYYY-MM-DD HH:MM:SS'."
+    startsOn: "The UTC day it starts, 'YYYY-MM-DD'."
+    allday: "True for an all-day event, whose start and stop carry no meaningful time."
     location: "Location, when set."
-    description: "Agenda / notes, when set."
+    description: "Agenda / notes, when set (HTML)."
+    user_id: "The organiser's Odoo user id."
+    sourceUrl: "Opens this meeting in Odoo's calendar."
     partner_ids: { cardinality: LIST, description: "Attendee partner ids — the key MEETING_WITH fans out over." }
   virtualJoins:
     - { anchorLabel: OdooBook, relationship: HAS_MEETING, keyField: scope,
         recordKeyField: scopeKey, producer: meetingsAll, maxFanoutTotal: 50000,
-        description: "Every calendar meeting in the book." }
+        description: "Every calendar meeting in the book, earliest first." }
 
 # A scheduled next action (mail.activity): the to-do Odoo attaches to a record. res_model +
 # res_id say what it hangs on; deadlines make "what needs doing" a date filter, not a guess.
@@ -318,20 +429,30 @@
   userAnchor: false
   # A FollowUp of the business vocabulary; FOLLOW_UP_ON (declared on OdooCustomer) is its edge.
   parents: [FollowUp]
-  description: |
-    A scheduled activity — call, to-do, email — with its deadline and the record it belongs
-    to (res_model/res_id, e.g. a crm.lead id).
+  description: >-
+    One scheduled Odoo activity (mail.activity), identified by `id` — a call, an email, a
+    to-do — due on a BUSINESS date, hanging on one record: res_model says which kind ('crm.lead', 'res.partner', …), res_id which
+    one. Done activities leave Odoo, so everything here is still to do; overdue is
+    `a.date_deadline < '<today>'`. Reached by HAS_ACTIVITY from OdooBook, soonest first;
+    FOLLOW_UP_ON reaches the partner when it hangs on one. Filters on res_model, res_id, owner and
+    date_deadline are applied by Odoo.
   properties:
     id:
       identity: true
       description: "Odoo mail.activity id."
     summary: "What the activity is, when the author wrote one."
-    res_model: "Model of the record it hangs on (crm.lead, res.partner, ...)."
-    res_id: "Id of that record."
-    partnerId: "res_id when the activity hangs on a partner (res.partner); empty on a deal or anything else."
+    title: "What is to be done: the summary, or the record's name when there is none."
+    kind: "The activity type, as Odoo names it ('To-Do', 'Call', 'Email')."
+    res_model: "Model of the record it hangs on: 'crm.lead' (a deal), 'res.partner' (a company or person), …"
+    res_id: "Id of that record, in the model res_model names."
+    partnerId: "res_id when the activity hangs on a partner (res.partner); null on a deal or anything else."
     res_name: "Display name of that record."
-    date_deadline: "Due date."
+    date_deadline: "BUSINESS date it is due, 'YYYY-MM-DD'."
+    dueOn: "The day it is due (the vocabulary's name for date_deadline)."
+    user_id: "The assignee's Odoo user id. Their NAME is `ownerName`."
+    ownerName: "Who on our side is to do it, by name."
+    sourceUrl: "Opens the record it hangs on, in Odoo."
   virtualJoins:
     - { anchorLabel: OdooBook, relationship: HAS_ACTIVITY, keyField: scope,
         recordKeyField: scopeKey, producer: activitiesAll, maxFanoutTotal: 50000,
-        description: "Every scheduled activity in the book." }
+        description: "Every scheduled activity in the book, soonest due first." }

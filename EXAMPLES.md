@@ -35,7 +35,34 @@ here is reconciled against Odoo directly by `tests/verify.sh`; every question li
 > (Atlassian), **$120,000 at 65%**. The selector refuses to drop a stated constraint: a view
 > that cannot express "over 60%" is not selected for this question.
 
-## The book joined to the real world (realm-diffbot)
+## One company, one group
+
+> **How are we doing with Qantas?**
+> → view `OdooAccountSnapshot`, the company named exactly as Odoo holds it — one row: what
+> Qantas owes and on how many invoices, its open deals and their expected revenue, what we have
+> won from it and how many deals we lost. Three source calls (the company, its invoices, its
+> deals), however many companies the book holds.
+
+> **Show me Qantas and its subsidiaries.**
+> → view `OdooCompanyGroup` — the parent company Qantas belongs to and every company Odoo files
+> beneath it, four levels down, each with its depth and the chain that reaches it. The name is
+> matched exactly: "Qantas" does not also answer every company whose name contains it. When only
+> part of a name is known, `OdooCompanyGroupSearch` is the explicit search, and says so.
+
+## The pipeline in totals
+
+> **What is our pipeline by stage?**
+> → view `OdooPipelineByStage` — open deals, expected revenue and the probability-weighted total
+> per stage. `OdooPipelineBySalesperson` is the same per owner.
+
+> **What deals did we lose this quarter, and why?**
+> → view `OdooLosses` — each lost deal with its value and the reason Odoo recorded, the window
+> applied by Odoo to the day the deal was marked lost.
+
+## The book joined to the real world (realm-odoo-enrichment)
+
+The views in this section and the next live in realm-odoo-enrichment, which joins this realm to
+realm-diffbot and realm-research; they answer when it is installed.
 
 > **How big are our customers?**
 > → view `OdooCustomerFirmographics` — Bunnings **53,000** employees, Qantas 21,000,
