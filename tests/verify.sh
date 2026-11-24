@@ -353,7 +353,9 @@ if word:
 # PER CUSTOMER. The five customers with most deals: count and revenue by read_group, one call each.
 per = {}
 for r in leads: per.setdefault(r["partner_id"], []).append(r["expected_revenue"])
-top = sorted(per, key=lambda k: (-len(per[k]), k))[:5]
+# A deal's partner need not be a customer (customer_rank > 0), and HAS_CUSTOMER reaches only those.
+customers = {r["id"] for r in ask_odoo("res.partner", "search_read", {"domain": [["customer_rank", ">", 0], ["id", "in", list(per)]], "fields": ["id"]})}
+top = sorted((k for k in per if k in customers), key=lambda k: (-len(per[k]), k))[:5]
 ids = ", ".join(f"'{i}'" for i in top)
 q = f"MATCH (b:OdooBook {{scope: 'all'}})-[:HAS_CUSTOMER]->(c:OdooCustomer) WHERE c.id IN [{ids}] MATCH (c)-[:HAS_OPPORTUNITY]->(l:OdooLead)"
 pushed = kg(f"{q} RETURN c.id AS id, count(l) AS n, sum(l.expected_revenue) AS revenue ORDER BY id")
