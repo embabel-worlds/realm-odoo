@@ -255,6 +255,122 @@ import sys
 sys.exit(1 if bad else 0)
 PYEOF
 
+echo "== L2c: numbers Odoo answers itself — search_count and read_group =="
+# A count or total over a door that declares `aggregates:` is one source call per measure, made
+# with the aggregate's own arguments. Each figure is checked three ways: against Odoo asked
+# directly, against the same figure folded from the records (a measure no door declares, `min` of
+# the name, makes the engine read them), and by the calls it cost — which are printed, so the
+# difference between the two reads is on the record.
+ODOO="$ODOO" ODOO_KEY="$ODOO_KEY" APPLIANCE="$APPLIANCE" AUTHCFG="$AUTHCFG" python3 - <<'PYEOF' || fail=1
+import json, os, subprocess, urllib.request
+odoo, key = os.environ['ODOO'], os.environ['ODOO_KEY']
+base, auth = os.environ['APPLIANCE'], os.environ['AUTHCFG']
+
+def ask_odoo(model, method, body):
+    req = urllib.request.Request(f"{odoo}/json/2/{model}/{method}", data=json.dumps(body).encode(),
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as resp:
+        return json.load(resp)
+
+def kg(cypher):
+    out = subprocess.run(["curl", "-s", "-K", auth, "-X", "POST", f"{base}/api/v1/admin/kg/execute",
+                          "-H", "Content-Type: application/json", "-d", json.dumps({"cypher": cypher})],
+                         capture_output=True, text=True).stdout
+    return json.loads(out, strict=False)
+
+bad = 0
+def check(name, ok, detail=""):
+    global bad
+    print(("  ok   " if ok else "  FAIL ") + name + (f" ({detail})" if detail and not ok else ""))
+    if not ok: bad += 1
+def calls(label, d):
+    print(f"    {label}: {d.get('apiCalls')} call(s)")
+    for c in d.get("apiCallLog") or []: print(f"      {c[:240]}")
+
+money = lambda x: round(float(x or 0), 2)
+UNPAID = [["move_type", "=", "out_invoice"], ["state", "=", "posted"], ["payment_state", "in", ["not_paid", "partial"]]]
+inv = ask_odoo("account.move", "search_read", {"domain": UNPAID, "fields": ["partner_id", "amount_residual"], "load": ""})
+
+# THE BOOK. How many unpaid invoices, and how much is owed on them.
+book = "MATCH (b:OdooBook {scope: 'all'})-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)"
+pushed = kg(f"{book} RETURN count(i) AS n, sum(i.amount_residual) AS owed")
+folded = kg(f"{book} RETURN count(i) AS n, sum(i.amount_residual) AS owed, min(i.name) AS first")
+p, f = (pushed.get("rows") or [{}])[0], (folded.get("rows") or [{}])[0]
+check(f"book unpaid count = Odoo's {len(inv)}", p.get("n") == len(inv), str(p))
+check(f"book owed = Odoo's {money(sum(r['amount_residual'] for r in inv))}",
+      money(p.get("owed")) == money(sum(r["amount_residual"] for r in inv)), str(p))
+check("book count and owed = the same folded from the records",
+      (p.get("n"), money(p.get("owed"))) == (f.get("n"), money(f.get("owed"))), f"{p} vs {f}")
+check("book count is one search_count and one read_group",
+      sorted(c.split(" ")[0] for c in pushed.get("apiCallLog") or []) == sorted(["invoicesSearchCount", "invoicesReadGroup"])
+      or pushed.get("apiCalls") == 2, str(pushed.get("apiCallLog")))
+calls("pushed", pushed); calls("from records", folded)
+
+# PER CUSTOMER. The five customers owing most, counted and totalled by read_group in one call each.
+owed = {}
+for r in inv: owed.setdefault(r["partner_id"], []).append(r["amount_residual"])
+top = sorted(owed, key=lambda k: -sum(owed[k]))[:5]
+if not top:
+    print("  skip per-customer: Odoo holds no unpaid invoices")
+else:
+    ids = ", ".join(f"'{i}'" for i in top)
+    q = f"MATCH (b:OdooBook {{scope: 'all'}})-[:HAS_CUSTOMER]->(c:OdooCustomer) WHERE c.id IN [{ids}] MATCH (c)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice)"
+    pushed = kg(f"{q} RETURN c.id AS id, count(i) AS n, sum(i.amount_residual) AS owed ORDER BY id")
+    folded = kg(f"{q} RETURN c.id AS id, count(i) AS n, sum(i.amount_residual) AS owed, min(i.name) AS first ORDER BY id")
+    got = {str(r["id"]): (r["n"], money(r["owed"])) for r in pushed.get("rows") or []}
+    want = {str(k): (len(owed[k]), money(sum(owed[k]))) for k in top}
+    check("per-customer count and owed = Odoo's", got == want, f"{got} vs {want}")
+    check("per-customer = the same folded from the records",
+          got == {str(r["id"]): (r["n"], money(r["owed"])) for r in folded.get("rows") or []}, str(folded.get("rows")))
+    calls("pushed", pushed); calls("from records", folded)
+
+# THE DEALS. Every deal on the book, open, won or lost: how many, and their expected revenue.
+LEADS = ["|", ["active", "=", True], ["active", "=", False]]
+leads = ask_odoo("crm.lead", "search_read", {"domain": LEADS + [["partner_id", "!=", False]],
+                                             "fields": ["partner_id", "expected_revenue"], "load": ""})
+book = "MATCH (b:OdooBook {scope: 'all'})-[:HAS_ANY_LEAD]->(l:OdooLead)"
+pushed = kg(f"{book} RETURN count(l) AS n, sum(l.expected_revenue) AS revenue")
+folded = kg(f"{book} RETURN count(l) AS n, sum(l.expected_revenue) AS revenue, min(l.name) AS first")
+p, f = (pushed.get("rows") or [{}])[0], (folded.get("rows") or [{}])[0]
+check(f"deal count = Odoo's {len(leads)}", p.get("n") == len(leads), str(p))
+check(f"deal revenue = Odoo's {money(sum(r['expected_revenue'] for r in leads))}",
+      money(p.get("revenue")) == money(sum(r["expected_revenue"] for r in leads)), str(p))
+check("deal count and revenue = the same folded from the records",
+      (p.get("n"), money(p.get("revenue"))) == (f.get("n"), money(f.get("revenue"))), f"{p} vs {f}")
+check("deal count is one call per measure", pushed.get("apiCalls") == 2, str(pushed.get("apiCallLog")))
+calls("pushed", pushed); calls("from records", folded)
+
+# A CASE-SENSITIVE CONTAINS is widened by ilike, so its count must come from the records.
+word = next((w for r in ask_odoo("crm.lead", "search_read", {"domain": LEADS, "fields": ["name"], "limit": 1})
+             for w in r["name"].split() if len(w) > 3 and w.isalpha()), None)
+if word:
+    q = f"{book} WHERE l.name CONTAINS '{word}' RETURN count(l) AS n"
+    want = sum(1 for r in ask_odoo("crm.lead", "search_read", {"domain": LEADS + [["partner_id", "!=", False], ["name", "ilike", word]],
+                                                               "fields": ["name"], "load": ""}) if word in r["name"])
+    got = kg(q)
+    check(f"count of deals named with '{word}' (case as written) = {want}", (got.get("rows") or [{}])[0].get("n") == want, str(got.get("rows")))
+
+# PER CUSTOMER. The five customers with most deals: count and revenue by read_group, one call each.
+per = {}
+for r in leads: per.setdefault(r["partner_id"], []).append(r["expected_revenue"])
+# A deal's partner need not be a customer (customer_rank > 0), and HAS_CUSTOMER reaches only those.
+customers = {r["id"] for r in ask_odoo("res.partner", "search_read", {"domain": [["customer_rank", ">", 0], ["id", "in", list(per)]], "fields": ["id"]})}
+top = sorted((k for k in per if k in customers), key=lambda k: (-len(per[k]), k))[:5]
+ids = ", ".join(f"'{i}'" for i in top)
+q = f"MATCH (b:OdooBook {{scope: 'all'}})-[:HAS_CUSTOMER]->(c:OdooCustomer) WHERE c.id IN [{ids}] MATCH (c)-[:HAS_OPPORTUNITY]->(l:OdooLead)"
+pushed = kg(f"{q} RETURN c.id AS id, count(l) AS n, sum(l.expected_revenue) AS revenue ORDER BY id")
+folded = kg(f"{q} RETURN c.id AS id, count(l) AS n, sum(l.expected_revenue) AS revenue, min(l.name) AS first ORDER BY id")
+got = {str(r["id"]): (r["n"], money(r["revenue"])) for r in pushed.get("rows") or []}
+want = {str(k): (len(per[k]), money(sum(per[k]))) for k in top}
+check("per-customer deal count and revenue = Odoo's", got == want, f"{got} vs {want}")
+check("per-customer = the same folded from the records",
+      got == {str(r["id"]): (r["n"], money(r["revenue"])) for r in folded.get("rows") or []}, str(folded.get("rows")))
+calls("pushed", pushed); calls("from records", folded)
+
+import sys
+sys.exit(1 if bad else 0)
+PYEOF
+
 echo "== L3: the natural-language battery, figures not just rows =="
 EXP_AMT=${TOP_OWED#*:}
 # Money questions run 3x: generation is stochastic; a view-routed answer is stable, and any
