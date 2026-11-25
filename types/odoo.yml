@@ -9,15 +9,15 @@
 #
 # TWO CLOCKS. Odoo keeps two kinds of date, and a question has to say which it means:
 #   - the SYSTEM clock — create_date, date_closed, date_last_stage_update, a message's date:
-#     when Odoo was told, stamped by the server, in UTC (a deal's create_date and date_closed as
-#     ISO-8601 'YYYY-MM-DDTHH:MM:SSZ', the others as Odoo's 'YYYY-MM-DD HH:MM:SS'). On a book that
+#     when Odoo was told, stamped by the server, in UTC, held here as ISO-8601 'YYYY-MM-DDTHH:MM:SSZ'
+#     (Odoo itself says 'YYYY-MM-DD HH:MM:SS'; see the producers' note on dates). On a book that
 #     was imported or seeded these are the load time, not when the deal really began;
 #   - BUSINESS dates — date_deadline, invoice_date, invoice_date_due: what a person agreed or
 #     typed, as 'YYYY-MM-DD' with no time and no zone.
-# Compare either against 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS' literals: those reach Odoo as
-# filters, and they sort against the stored strings exactly. An ISO 'T' does not
-# ('2026-10-22T09:00' sorts after every '2026-10-22 …'). `date()` in a query is the APPLIANCE's
-# day, which is not necessarily the business's.
+# Compare a system-clock field against any ISO-8601 spelling ('2026-10-22', '2026-10-22T09:00:00Z',
+# '+00:00'): Odoo is sent it in its own spelling, and the stored ISO text sorts against it exactly,
+# so `date(datetime(l.date_last_stage_update))` works too. A business date takes 'YYYY-MM-DD'.
+# `date()` in a query is the APPLIANCE's day, which is not necessarily the business's.
 #
 # Every date property declares its shape as `format:`, and every money property its currency as
 # `currency: currency` (the row's ISO code is in `currency`); a model writing a query sees both
@@ -76,7 +76,7 @@
     create_date: { format: "ISO 8601 timestamp, UTC (yyyy-MM-ddTHH:mm:ssZ)", description: "SYSTEM clock: when the record was created in Odoo. On an imported or seeded book this is the load time, not when the deal began." }
     date_closed: { format: "ISO 8601 timestamp, UTC (yyyy-MM-ddTHH:mm:ssZ)", description: "SYSTEM clock: when the deal was marked won or lost. Null while open. The close date for 'won last quarter'." }
     date_deadline: { format: yyyy-MM-dd, description: "BUSINESS date: the expected closing date the salesperson set, no zone. Null when nobody set one." }
-    date_last_stage_update: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "SYSTEM clock: when the deal last moved stage. How long a deal has sat still." }
+    date_last_stage_update: { format: "ISO 8601 timestamp, UTC (yyyy-MM-ddTHH:mm:ssZ)", description: "SYSTEM clock: when the deal last moved stage. How long a deal has sat still." }
     closeOn: { format: yyyy-MM-dd, description: "date_deadline while open; the UTC day of date_closed once decided. Odoo applies a window on it through HAS_DECIDED_LEAD." }
     lostReason: "Why a lost deal was lost, as Odoo names the reason ('Too expensive'). Only through HAS_DECIDED_LEAD; null when none was given."
     user_id: "The salesperson's Odoo user id (bare). Their NAME is `ownerName`."
@@ -291,7 +291,7 @@
     amount_total: { type: float, currency: currency, description: "Order total, tax included, major units." }
     currency: "ISO 4217 code of the order's currency."
     state: "'draft' or 'sent' (still a quotation), 'sale' (confirmed), 'done' (locked), 'cancel' (cancelled)."
-    date_order: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "Order date: the quotation date until confirmed, then the confirmation date." }
+    date_order: { format: "ISO 8601 timestamp, UTC (yyyy-MM-ddTHH:mm:ssZ)", description: "Order date: the quotation date until confirmed, then the confirmation date." }
     sourceUrl: "Opens this order in Odoo."
     partnerKey: "The partner id this order is attributed to — the same as partner_id."
   virtualJoins:
@@ -367,7 +367,7 @@
       identity: true
       description: "Odoo mail.message id."
     body: "Message body, as HTML. Strip tags before judging it."
-    date: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "SYSTEM clock: when it was posted. A back-dated import carries the date it was written." }
+    date: { format: "ISO 8601 timestamp, UTC (yyyy-MM-ddTHH:mm:ssZ)", description: "SYSTEM clock: when it was posted. A back-dated import carries the date it was written." }
     writtenOn: { format: yyyy-MM-dd, description: "The UTC day it was posted (the vocabulary's AccountNote.writtenOn)." }
     subject: "Subject, when the message was an email."
     message_type: "'comment' (an internal note or a logged message) or 'email'."
@@ -419,7 +419,7 @@
   parents: [Meeting]
   description: >-
     One meeting in the Odoo calendar (calendar.event), identified by `id`, with its attendee
-    partner ids. start and stop are UTC, 'YYYY-MM-DD HH:MM:SS' — convert before calling one "this afternoon"; for an
+    partner ids. start and stop are UTC, ISO-8601 ('YYYY-MM-DDTHH:MM:SSZ') — convert before calling one "this afternoon"; for an
     all-day event read only the day (startsOn). Reached by HAS_MEETING from OdooBook, earliest
     first; MEETING_WITH reaches the attendees. A window on start or startsOn is applied by Odoo:
     WHERE m.start >= '2026-11-24'.
@@ -429,8 +429,8 @@
       description: "Odoo calendar.event id."
     name: "Meeting subject."
     title: "Meeting subject (the vocabulary's name)."
-    start: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "When the meeting starts, UTC. On an all-day event the time carries no meaning." }
-    stop: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "When the meeting ends, UTC." }
+    start: { format: "ISO 8601 timestamp, UTC (yyyy-MM-ddTHH:mm:ssZ)", description: "When the meeting starts, UTC. On an all-day event the time carries no meaning." }
+    stop: { format: "ISO 8601 timestamp, UTC (yyyy-MM-ddTHH:mm:ssZ)", description: "When the meeting ends, UTC." }
     startsOn: { format: yyyy-MM-dd, description: "The UTC day it starts." }
     allday: "True for an all-day event, whose start and stop carry no meaningful time."
     location: "Location, when set."
