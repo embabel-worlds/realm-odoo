@@ -19,6 +19,72 @@ check() { # name expected actual
   else echo "  FAIL $1: expected $2, got $3"; fail=1; fi
 }
 py() { python3 -c "$1"; }
+# Whether an answer is the whole truth is the ENGINE's to say, and it says it beside the rows: a
+# query's `error`, `reason` and `warnings` (each opening with its code), a view's `status`,
+# `outcome` and `warnings`. A figure read past them reports a source that failed under load, or a
+# page it capped, as drift in the realm. So every figure goes through short(): a refusal reads
+# REFUSED and a short answer PARTIAL <figure>: <the engine's reason>, which no check expects.
+# Exported, so each Python leg below runs the same definition (`exec(os.environ["SHORT_PY"])`).
+SHORT_PY=$(cat <<'PY'
+import json, sys
+# Raw warning codes that mean rows or values may be missing (the engine's incompleteness kinds).
+# Cost notes (FILTERED_IN_GRAPH, AGGREGATE_NOT_PUSHED, EMPTY_NOT_KEPT, PUSHDOWN_VALUE_UNMATCHED),
+# FILTER_STARVED (an honest empty), STALE_COPY, FIELDS_WITHHELD and UNKNOWN_VIA leave every row in place.
+SHORT_CODES = (
+    "PARTIAL_RESULT", "PRODUCER_ERROR", "NEEDS_FILTER", "NEEDS_PRODUCER", "FILTER_REJECTED",
+    "UNPUSHED_FILTER", "AMBIGUOUS_LABEL", "INCOMPLETE_TRAVERSAL", "INCOMPLETE_RANKING",
+    "INCOMPLETE_AGGREGATE", "INCOMPLETE_INPUT", "MATERIALIZATION_FAILED", "REDUCTION_FAILED",
+    "UNPARSEABLE_ANSWER", "TERMS_UNAVAILABLE", "COMPUTE_FAILED", "PROPERTY_NOT_STORED",
+    "FOLLOW_CAPPED", "UNLINKED_CHILDREN", "RESOLUTION_DROPPED", "AGENTIC_DEGRADED",
+    "SOURCE_UNANSWERED",
+)
+# The typed `reason` a query result carries when it is not a clean answer and not an honest empty.
+SHORT_REASONS = ("UNBOUNDED", "PARTIAL_NOT_MATCHED", "UNPUSHED_FILTER", "DISCONNECTED",
+                 "INTERNAL_ERROR", "WRITE_IN_PROGRESS", "KILLED", "TOO_EXPENSIVE")
+# Public warning codes on a view envelope that mean the same.
+SHORT_PUBLIC = ("PARTIAL", "REDUCTION_FAILED", "COMPUTE_FAILED", "PROPERTY_NOT_STORED",
+                "AGENTIC_DEGRADED", "RATE_LIMITED", "SOURCE_UNAVAILABLE", "SOURCE_REJECTED",
+                "INVALID_FILTER", "UNPUSHED_FILTER", "TOO_BROAD", "FETCH_CAPPED",
+                "INDEX_UNAVAILABLE", "ARGUMENT_REFUSED")
+
+
+def short(d, figure=None):
+    tag = "PARTIAL" if figure is None else "PARTIAL %s" % (figure,)
+    if not isinstance(d, dict):
+        return "REFUSED: not an engine answer: " + str(d)[:160]
+    if "outcome" in d or "status" in d:  # a view envelope
+        err = d.get("error") or {}
+        if d.get("status") != "SUCCEEDED":
+            return "REFUSED: %s %s" % (d.get("status"), (err.get("code", "") + " " + err.get("message", "")).strip()[:160] if isinstance(err, dict) else str(err)[:160])
+        ws = [w for w in d.get("warnings") or [] if isinstance(w, dict) and w.get("code") in SHORT_PUBLIC]
+        if d.get("outcome") not in ("OK", "EMPTY") or ws:
+            why = ws[0]["code"] + ": " + ws[0].get("message", "") if ws else "outcome " + str(d.get("outcome"))
+            return "%s: %s" % (tag, why[:200])
+        return None
+    if d.get("error"):
+        return "REFUSED: " + str(d["error"])[:160]
+    if d.get("run"):
+        return "%s: the run had not finished (%s)" % (tag, d["run"])
+    ws = [w for w in d.get("warnings") or [] if isinstance(w, str) and w.split(":", 1)[0].strip() in SHORT_CODES]
+    if ws:
+        return "%s: %s" % (tag, ws[0][:200])
+    if d.get("reason") in SHORT_REASONS:
+        return "%s: reason %s" % (tag, d["reason"])
+    return None
+PY
+)
+export SHORT_PY
+# The figure in column n of a query answer.
+n() { printf '%s' "$1" | python3 -c "$SHORT_PY
+d = json.loads(sys.stdin.read(), strict=False); r = d.get('rows') or []
+v = r[0].get('n') if r else 0
+print(short(d, v) or v)"; }
+# whole ANSWER SNIPPET: run SNIPPET over the parsed answer, as `d`, only when the engine says it is
+# whole; otherwise print why it is not, in place of the figure.
+whole() { printf '%s' "$1" | python3 -c "$SHORT_PY
+d = json.loads(sys.stdin.read(), strict=False); s = short(d)
+if s: print(s); sys.exit(0)
+$2"; }
 
 echo "== L0: ground truth, from Odoo directly =="
 CUSTOMERS=$(curl -s -X POST "$ODOO/json/2/res.partner/search_count" -H "Authorization: Bearer $ODOO_KEY" \
@@ -52,7 +118,7 @@ echo "  customers=$CUSTOMERS  top-debtor(partner:total)=$TOP_OWED  demo-seed=$SE
 echo "== L1: traversal reconciles =="
 KG=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
   -d '{"cypher":"MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer) RETURN count(DISTINCT c) AS n"}')
-check "kg customer count" "$CUSTOMERS" "$(echo "$KG" | py 'import json,sys;print(json.load(sys.stdin)["rows"][0]["n"])')"
+check "kg customer count" "$CUSTOMERS" "$(n "$KG")"
 
 echo "== L1a: the people at every company, more companies than one batched fetch may ask for =="
 # Every company in the book is more companies (6,855 on the demo book) than HAS_ACCOUNT_CONTACT may
@@ -62,7 +128,7 @@ PEOPLE=$(curl -s -X POST "$ODOO/json/2/res.partner/search_count" -H "Authorizati
   -H 'Content-Type: application/json' -d '{"domain":[["is_company","=",false],["parent_id.is_company","=",true]]}')
 KG=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
   -d '{"cypher":"MATCH (b:OdooBook)-[:HAS_COMPANY]->(k:OdooCustomer)-[:HAS_ACCOUNT_CONTACT]->(ct:OdooContact) RETURN count(DISTINCT ct) AS n"}')
-check "people at every company (vs search_count)" "$PEOPLE" "$(echo "$KG" | py 'import json,sys; d=json.load(sys.stdin); print(d["rows"][0]["n"] if d.get("rows") else "refused: " + str(d.get("error"))[:200])')"
+check "people at every company (vs search_count)" "$PEOPLE" "$(n "$KG")"
 # The company with the most people, and how many, from Odoo's records: the sweep must put each person
 # under their own company, not only count them.
 BUSIEST=$(curl -s -X POST "$ODOO/json/2/res.partner/search_read" -H "Authorization: Bearer $ODOO_KEY" \
@@ -72,7 +138,7 @@ n=collections.Counter(r['parent_id'] for r in json.load(sys.stdin))
 pid,c=sorted(n.items(), key=lambda kv: (-kv[1], kv[0]))[0]; print(f'{pid}:{c}')")
 KG=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
   -d '{"cypher":"MATCH (b:OdooBook)-[:HAS_COMPANY]->(k:OdooCustomer)-[:HAS_ACCOUNT_CONTACT]->(ct:OdooContact) RETURN toInteger(k.id) AS company, count(ct) AS people ORDER BY people DESC, company LIMIT 1"}')
-check "the company with the most people" "$BUSIEST" "$(echo "$KG" | py 'import json,sys; d=json.load(sys.stdin); r=(d.get("rows") or [{}])[0]; print("%s:%s" % (r.get("company"), r.get("people")))')"
+check "the company with the most people" "$BUSIEST" "$(whole "$KG" 'r=(d.get("rows") or [{}])[0]; print("%s:%s" % (r.get("company"), r.get("people")))')"
 
 echo "== L1b: the company hierarchy reconciles =="
 # Odoo's own answer: the company with the most companies filed under it, and their ids. The
@@ -92,16 +158,15 @@ else
   PARENT=${GROUP%%:*}
   DOWN=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
     -d "{\"cypher\":\"MATCH (b:OdooBook)-[:HAS_COMPANY]->(c:OdooCustomer) WHERE c.id = '$PARENT' MATCH (c)-[:HAS_SUBSIDIARY]->(s:OdooCustomer) OPTIONAL MATCH (s)-[:SUBSIDIARY_OF]->(up:OdooCustomer) RETURN s.id AS id, up.id AS up\"}")
-  check "subsidiaries of $PARENT (vs L0)" "$GROUP" "$PARENT:$(echo "$DOWN" | py 'import json,sys;print(",".join(sorted({str(r["id"]) for r in json.load(sys.stdin)["rows"]}, key=int)))')"
-  check "each leads back up to $PARENT" "$PARENT" "$(echo "$DOWN" | py 'import json,sys;print(",".join(sorted({str(r["up"]) for r in json.load(sys.stdin)["rows"]})) or "none")')"
+  check "subsidiaries of $PARENT (vs L0)" "$GROUP" "$PARENT:$(whole "$DOWN" 'print(",".join(sorted({str(r["id"]) for r in d["rows"]}, key=int)))')"
+  check "each leads back up to $PARENT" "$PARENT" "$(whole "$DOWN" 'print(",".join(sorted({str(r["up"]) for r in d["rows"]})) or "none")')"
 fi
 
 echo "== L2: the view, id-deduped, reconciles to the cent =="
 VIEW=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooPipelineReceivables/invoke" \
   -H 'Content-Type: application/json' -d '{"args":{"stage":"Proposition"}}')
-VIEW_TOP=$(echo "$VIEW" | py "
-import json,sys
-rows=json.load(sys.stdin).get('data') or []
+VIEW_TOP=$(whole "$VIEW" "
+rows=d.get('data') or []
 seen={}
 for r in rows:
     if r.get('invoiceId') is not None: seen[r['invoiceId']]=(int(r['customerId']),r['owed'])
@@ -120,6 +185,7 @@ echo "== L2b: what Odoo filters, and what a question costs =="
 ODOO="$ODOO" ODOO_KEY="$ODOO_KEY" APPLIANCE="$APPLIANCE" AUTHCFG="$AUTHCFG" python3 - <<'PYEOF' || fail=1
 import json, os, subprocess, urllib.request
 odoo, key = os.environ['ODOO'], os.environ['ODOO_KEY']
+exec(os.environ["SHORT_PY"])
 base, auth = os.environ['APPLIANCE'], os.environ['AUTHCFG']
 
 def ask_odoo(model, method, body):
@@ -133,6 +199,10 @@ def view(name, args):
                           "-H", "Content-Type: application/json", "-d", json.dumps({"args": args})],
                          capture_output=True, text=True).stdout
     d = json.loads(out, strict=False)
+    # A short or refused answer fails here, with the engine's reason, whatever the checks made
+    # from its rows go on to say: a negative check passes on rows that are not all there.
+    s = short(d, len(d.get("data") or []))
+    if s: check(f"view {name} {json.dumps(args)} answered whole", False, s)
     return d, d.get("data") or [], (d.get("metrics") or {}).get("externalCalls")
 
 bad = 0
@@ -265,7 +335,10 @@ if any_lead:
                           "-d", json.dumps({"cypher": f"MATCH (b:OdooBook)-[:HAS_ANY_LEAD]->(l:OdooLead) WHERE l.id = '{lid}' "
                                                       "RETURN l.name AS name, l.probability AS p, l.probabilityPercent AS pct, l.status AS status"})],
                          capture_output=True, text=True).stdout
-    kg = json.loads(out, strict=False).get("rows") or []
+    kd = json.loads(out, strict=False)
+    s = short(kd, len(kd.get("rows") or []))
+    if s: check(f"deal {lid} answered whole", False, s)
+    kg = kd.get("rows") or []
     check(f"deal {lid} read by id", len(kg) == 1 and kg[0].get("name") == any_lead[0]["name"], str(kg)[:150])
     if kg:
         check("probability is the fraction of probabilityPercent",
@@ -284,6 +357,7 @@ echo "== L2c: numbers Odoo answers itself — search_count and read_group =="
 ODOO="$ODOO" ODOO_KEY="$ODOO_KEY" APPLIANCE="$APPLIANCE" AUTHCFG="$AUTHCFG" python3 - <<'PYEOF' || fail=1
 import json, os, subprocess, urllib.request
 odoo, key = os.environ['ODOO'], os.environ['ODOO_KEY']
+exec(os.environ["SHORT_PY"])
 base, auth = os.environ['APPLIANCE'], os.environ['AUTHCFG']
 
 def ask_odoo(model, method, body):
@@ -296,7 +370,10 @@ def kg(cypher):
     out = subprocess.run(["curl", "-s", "-K", auth, "-X", "POST", f"{base}/api/v1/admin/kg/execute",
                           "-H", "Content-Type: application/json", "-d", json.dumps({"cypher": cypher})],
                          capture_output=True, text=True).stdout
-    return json.loads(out, strict=False)
+    d = json.loads(out, strict=False)
+    s = short(d, (d.get("rows") or [{}])[0].get("n") if d.get("rows") else 0)
+    if s: check(f"answered whole: {cypher[:120]}", False, s)
+    return d
 
 bad = 0
 def check(name, ok, detail=""):
@@ -398,9 +475,8 @@ EXP_AMT=${TOP_OWED#*:}
 for Q in "How many customers do we have" "Which customers owe us most money" "Which customers owe us most money" "Which customers owe us most money" "which is our most valuable customer"; do
   A=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/ask" -H 'Content-Type: application/json' \
     -d "{\"question\":\"$Q\"}")
-  GOT=$(echo "$A" | py "
-import json,sys
-d=json.loads(sys.stdin.read(), strict=False); rows=d.get('rows') or []
+  GOT=$(whole "$A" "
+rows=d.get('rows') or []
 if not rows: print('NO-ROWS'); raise SystemExit
 r=rows[0]
 nums=[v for v in r.values() if isinstance(v,(int,float))]
@@ -424,7 +500,8 @@ done
 echo "== L3b: the battery (tests/questions.yml) =="
 DIR="$(dirname "$0")"
 python3 - "$DIR/questions.yml" "$APPLIANCE" "$AUTHCFG" "$SEEDED" "$RECEIVABLES" <<'PYEOF' || fail=1
-import json, sys, subprocess, yaml
+import json, os, sys, subprocess, yaml
+exec(os.environ["SHORT_PY"])
 
 qfile, base, auth = sys.argv[1], sys.argv[2], sys.argv[3]
 have = {"seed": sys.argv[4] == "1", "receivables": sys.argv[5] == "1"}
@@ -458,6 +535,11 @@ for case in battery:
         continue
     a = curl("/api/v1/admin/kg/ask", {"question": q})
     rows = a.get("rows") or []
+    # An answer the engine marks short is not the ask's figure, however it compares.
+    s = short(a, len(rows))
+    if s:
+        print("  FAIL " + q + " -> " + s); bad += 1
+        continue
     if "matchesView" in exp:
         mv = exp["matchesView"]
         v = curl("/api/v1/views/%s/invoke" % mv["name"], {"args": mv.get("args", {})})
@@ -466,8 +548,8 @@ for case in battery:
         # routed through the view) — comparing the view's totalOwed against the answer's
         # biggest number once failed a correct answer for leading with a headcount.
         want, got = top_figure(vrows, mv.get("column")), top_figure(rows, mv.get("column"))
-        if v.get("status") != "SUCCEEDED":
-            ok, note = False, " (view did not run: %s)" % str(v.get("error") or v)[:120]
+        if short(v):
+            ok, note = False, " (view: %s)" % short(v, len(vrows))
         elif not vrows:
             # The view ran and found nothing — no win this quarter yet, a book that owes nothing. Its
             # figure is "none", and the ask matches it by stating no figure: demanding a number here
@@ -502,8 +584,12 @@ else
     -H 'Content-Type: application/json' -d '{"args":{}}')
   FVIEW="$FVIEW" DIFFBOT_TOKEN="$DIFFBOT_TOKEN" python3 - <<'PYEOF' || fail=1
 import json, os, sys, urllib.request, urllib.parse
+exec(os.environ["SHORT_PY"])
 token = os.environ['DIFFBOT_TOKEN']
-rows = json.loads(os.environ['FVIEW']).get('data') or []
+fview = json.loads(os.environ['FVIEW'])
+rows = fview.get('data') or []
+if short(fview, len(rows)):
+    print("  FAIL OdooCustomerFirmographics: " + short(fview, len(rows))); sys.exit(1)
 # Every row is enriched by construction — the view's MATCH requires the Diffbot hop —
 # so the reconciliation set is the rows that carry the join key to re-ask with.
 matched = [r for r in rows if r.get('website')]
@@ -540,6 +626,7 @@ PIPE=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooOpenPipeline/i
   -H 'Content-Type: application/json' -d '{"args":{}}')
 TRIAGE="$TRIAGE" ATRISK="$ATRISK" PIPE="$PIPE" SEEDED="$SEEDED" python3 - <<'PYEOF' || fail=1
 import json, os, sys
+exec(os.environ["SHORT_PY"])
 d = json.loads(os.environ['TRIAGE'])
 bad = 0
 def check(name, ok, detail=""):
@@ -547,6 +634,9 @@ def check(name, ok, detail=""):
     print(("  ok   " if ok else "  FAIL ") + name + (f" ({detail})" if detail and not ok else ""))
     if not ok: bad += 1
 check("view invocation succeeded", d.get("status") == "SUCCEEDED", str(d)[:150])
+for label, env in (("OdooDealTriage", "TRIAGE"), ("OdooDealTriage at_risk", "ATRISK"), ("OdooOpenPipeline", "PIPE")):
+    v = json.loads(os.environ[env])
+    check(f"{label} answered whole", not short(v), short(v, len(v.get("data") or [])))
 rows = d.get("data") or []
 check("triage rows returned", len(rows) > 0)
 check("triage labels stay in vocabulary",
@@ -583,14 +673,18 @@ RECV=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/OdooReceivablesByC
   -H 'Content-Type: application/json' -d '{"args":{"limit":100000}}')
 PREP="$PREP" RECV="$RECV" SEEDED="$SEEDED" python3 - <<'PYEOF' || fail=1
 import json, os, sys
+exec(os.environ["SHORT_PY"])
 d = json.loads(os.environ['PREP'])
-recv = {r["customer"]: r["totalOwed"] for r in (json.loads(os.environ['RECV']).get("data") or [])}
+rv = json.loads(os.environ['RECV'])
+recv = {r["customer"]: r["totalOwed"] for r in (rv.get("data") or [])}
 bad = 0
 def check(name, ok, detail=""):
     global bad
     print(("  ok   " if ok else "  FAIL ") + name + (f" ({detail})" if detail and not ok else ""))
     if not ok: bad += 1
 check("view invocation succeeded", d.get("status") == "SUCCEEDED", str(d)[:150])
+for label, v in (("OdooMeetingBriefing", d), ("OdooReceivablesByCustomer", rv)):
+    check(f"{label} answered whole", not short(v), short(v, len(v.get("data") or [])))
 rows = d.get("data") or []
 by = {r.get("meeting"): r for r in rows}
 # The two meetings are the demo seed's; on another book the figures beside every briefing still
