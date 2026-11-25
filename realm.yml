@@ -1,6 +1,11 @@
 name: odoo
 description: "Odoo CRM deals, customers, invoices and chatter, read live through its JSON-2 API. Over Odoo's OWN middle tier, never the database: CRM deals, partners (companies and the people at them, with the company hierarchy), unpaid invoices, orders, chatter, meetings and activities, as virtual types that fill the business vocabulary's Opportunity, CrmAccount, AccountContact, AccountNote, Meeting and FollowUp. Every filter a question writes on status, stage, owner, name, amount or date is applied by Odoo's own domain, a single company or deal is one call, and every relation is one the ORM declares — nothing is guessed. Ships a skill that teaches a coding agent to extend the realm for a customer's custom modules by reading fields_get through this same API."
 version: 0.2.5
+# The business vocabulary declares the parent types every type here fills and the CustomerAccount
+# spine; without it the types cannot load and the install is refused. Declared, so installing this
+# realm brings the vocabulary in.
+requires:
+  business-vocabulary: "0.1.5"
 author: Rod Johnson
 category: customers
 tags:
