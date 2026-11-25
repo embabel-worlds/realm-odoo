@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { entityForTest, mockGateway } from "@embabel/runtime-types";
 import type { OdooWriteGateway } from "../src/api/odoo";
-import { OdooLead } from "../src/api/lead";
+import { OdooLead } from "../src/api/odoo-lead";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function lead(odoo: Record<string, (args: any) => any>) {

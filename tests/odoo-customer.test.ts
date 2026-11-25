@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { entityForTest, mockGateway } from "@embabel/runtime-types";
 import type { OdooWriteGateway } from "../src/api/odoo";
-import { OdooCustomer } from "../src/api/customer";
+import { OdooCustomer } from "../src/api/odoo-customer";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function customer(odoo: Record<string, (args: any) => any>, id: unknown = "12114") {

@@ -12,10 +12,10 @@ import Ajv from "ajv";
 import { describe, expect, it } from "vitest";
 import { entityForTest, mockGateway } from "@embabel/runtime-types";
 import type { OdooWriteGateway } from "../src/api/odoo";
-import { OdooCustomer } from "../src/api/customer";
-import { OdooLead } from "../src/api/lead";
+import { OdooCustomer } from "../src/api/odoo-customer";
+import { OdooLead } from "../src/api/odoo-lead";
 
-type Entry = { name: string; onType?: string; inputSchema: object; outputSchema: object };
+type Entry = { namespace: string; name: string; onType?: string; inputSchema: object; outputSchema: object };
 const manifest = JSON.parse(readFileSync("dist/manifest.json", "utf8")) as { entries: Entry[] };
 const ajv = new Ajv({ allErrors: true });
 
@@ -60,6 +60,17 @@ describe("the published schemas", () => {
       expect(() => ajv.compile(e.inputSchema), `${e.name} input`).not.toThrow();
       expect(() => ajv.compile(e.outputSchema), `${e.name} output`).not.toThrow();
     }
+  });
+});
+
+/*
+ * A namespace two installed realms both contribute is withdrawn from both, every function in it,
+ * so a name another realm could also choose ("customer", "lead") takes this realm's methods away
+ * whenever that realm is installed beside it. The namespace is the file's name under src/api/.
+ */
+describe("the namespaces", () => {
+  it("are this realm's own", () => {
+    expect([...new Set(manifest.entries.map((e) => e.namespace))].sort()).toEqual(["odoo_customer", "odoo_lead"]);
   });
 });
 

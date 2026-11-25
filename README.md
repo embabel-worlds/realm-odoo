@@ -123,6 +123,12 @@ rows for answering questions. Each method calls exactly one of the write verbs b
 change in Odoo is what `apis/odoo-json2.json` declares. To change a method: edit `src/api/`,
 `npm test`, `npm run build`, and commit `dist/` with it.
 
+Each file in `src/api/` is a gateway namespace named after it: `odoo-customer.ts` is
+`odoo_customer`, `odoo-lead.ts` is `odoo_lead`. The `odoo_` is not decoration. A namespace that
+two installed realms both contribute is withdrawn from both, so a plain `customer` would lose
+these methods whenever another realm with a `customer` (a billing realm, say) is installed
+beside this one. A new file keeps the prefix.
+
 ## Honest ledger
 
 - **Verified live**: everything above, against Odoo 19 (2026-08) demo data — including the
