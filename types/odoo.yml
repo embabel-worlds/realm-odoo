@@ -9,7 +9,8 @@
 #
 # TWO CLOCKS. Odoo keeps two kinds of date, and a question has to say which it means:
 #   - the SYSTEM clock — create_date, date_closed, date_last_stage_update, a message's date:
-#     when Odoo was told, stamped by the server, in UTC, as 'YYYY-MM-DD HH:MM:SS'. On a book that
+#     when Odoo was told, stamped by the server, in UTC (a deal's create_date and date_closed as
+#     ISO-8601 'YYYY-MM-DDTHH:MM:SSZ', the others as Odoo's 'YYYY-MM-DD HH:MM:SS'). On a book that
 #     was imported or seeded these are the load time, not when the deal really began;
 #   - BUSINESS dates — date_deadline, invoice_date, invoice_date_due: what a person agreed or
 #     typed, as 'YYYY-MM-DD' with no time and no zone.
@@ -72,8 +73,8 @@
     won_status: "Odoo's verdict: 'pending' (still open), 'won', or 'lost'. A deal archived without being lost stays 'pending' but is not in the pipeline (active=false)."
     status: "'open', 'won' or 'lost' (won_status, 'pending' read as 'open'). Odoo applies 'won'/'lost'; for open deals use HAS_OPEN_LEAD or won_status = 'pending'."
     active: "False once the deal is archived — which is how Odoo marks a LOST deal, and which hides it from Odoo's own lists. The pipeline doors read active deals only."
-    create_date: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "SYSTEM clock: when the record was created in Odoo. On an imported or seeded book this is the load time, not when the deal began." }
-    date_closed: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "SYSTEM clock: when the deal was marked won or lost. Null while open. The close date for 'won last quarter'." }
+    create_date: { format: "ISO 8601 timestamp, UTC (yyyy-MM-ddTHH:mm:ssZ)", description: "SYSTEM clock: when the record was created in Odoo. On an imported or seeded book this is the load time, not when the deal began." }
+    date_closed: { format: "ISO 8601 timestamp, UTC (yyyy-MM-ddTHH:mm:ssZ)", description: "SYSTEM clock: when the deal was marked won or lost. Null while open. The close date for 'won last quarter'." }
     date_deadline: { format: yyyy-MM-dd, description: "BUSINESS date: the expected closing date the salesperson set, no zone. Null when nobody set one." }
     date_last_stage_update: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "SYSTEM clock: when the deal last moved stage. How long a deal has sat still." }
     closeOn: { format: yyyy-MM-dd, description: "date_deadline while open; the UTC day of date_closed once decided. Odoo applies a window on it through HAS_DECIDED_LEAD." }

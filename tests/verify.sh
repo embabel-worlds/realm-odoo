@@ -518,6 +518,29 @@ wild = kg("MATCH (b:OdooBook {scope: 'all'})-[:HAS_CUSTOMER]->(c:OdooCustomer) W
 want = ask_odoo("res.partner", "search_count", {"domain": CUST + [["name", "like", "\\%"]]})
 check(f"customers named with a literal '%' = {want}, not every customer", (wild.get("rows") or [{}])[0].get("n") == want, str(wild.get("rows")))
 
+# A DATE BOUND IN ANY ISO-8601 SPELLING reaches Odoo in Odoo's own: '2000-01-01T00:00:00Z' was sent
+# as written, Odoo answered HTTP 500 ("expecting only datetimes with no timezone") and the count was
+# 0 beside a PRODUCER_ERROR. Every spelling must push, answer Odoo's own count, and agree.
+# The pipeline door's own domain (leadsOpenAll).
+OPEN_LEADS = [["active", "=", True], ["probability", "<", 100], ["partner_id", "!=", False]]
+for since in ("2026-01-01", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00+00:00", "2026-01-01 00:00:00"):
+    d = kg(f"MATCH (b:OdooBook)-[:HAS_OPEN_LEAD]->(l:OdooLead) WHERE l.create_date >= '{since}' RETURN count(l) AS n")
+    n = (d.get("rows") or [{}])[0].get("n")
+    if since == "2026-01-01":
+        want = ask_odoo("crm.lead", "search_count", {"domain": OPEN_LEADS + [["create_date", ">=", "2026-01-01 00:00:00"]]})
+    check(f"open deals created on or after '{since}' = {want}", n == want and not d.get("error"), f"{n} {str(d.get('error'))[:200]}")
+    check(f"  ...the bound was sent to Odoo, not filtered in the graph",
+          "PUSHDOWN_VALUE_UNMATCHED" not in str(d.get("warnings")) and "FILTERED_IN_GRAPH" not in str(d.get("warnings")), str(d.get("warnings"))[:300])
+d = kg("MATCH (b:OdooBook)-[:HAS_OPEN_LEAD]->(l:OdooLead) WHERE l.create_date >= '2000-01-01T00:00:00Z' RETURN count(l) AS n")
+want = ask_odoo("crm.lead", "search_count", {"domain": OPEN_LEADS + [["create_date", ">=", "2000-01-01 00:00:00"]]})
+check(f"open deals created since 2000, spelled with a zone, = {want}", (d.get("rows") or [{}])[0].get("n") == want and not d.get("error"),
+      f"{d.get('rows')} {str(d.get('error'))[:200]}")
+# A business date: invoice_date_due is a DATE column, so a 'T…Z' bound must not reach Odoo as written either.
+d = kg("MATCH (b:OdooBook)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice) WHERE i.invoice_date_due >= '2000-01-01T00:00:00Z' RETURN count(i) AS n")
+want = ask_odoo("account.move", "search_count", {"domain": UNPAID + [["invoice_date_due", ">=", "2000-01-01"]]})
+check(f"unpaid invoices due since 2000, spelled with a zone, = {want}, and no error", (d.get("rows") or [{}])[0].get("n") == want and not d.get("error"),
+      f"{d.get('rows')} {str(d.get('error'))[:200]}")
+
 import sys
 sys.exit(1 if bad else 0)
 PYEOF
