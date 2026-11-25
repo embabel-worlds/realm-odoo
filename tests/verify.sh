@@ -535,6 +535,14 @@ d = kg("MATCH (b:OdooBook)-[:HAS_OPEN_LEAD]->(l:OdooLead) WHERE l.create_date >=
 want = ask_odoo("crm.lead", "search_count", {"domain": OPEN_LEADS + [["create_date", ">=", "2000-01-01 00:00:00"]]})
 check(f"open deals created since 2000, spelled with a zone, = {want}", (d.get("rows") or [{}])[0].get("n") == want and not d.get("error"),
       f"{d.get('rows')} {str(d.get('error'))[:200]}")
+# Every other system-clock field is ISO-8601 too, so the engine's date functions read it.
+d = kg("MATCH (b:OdooBook)-[:HAS_OPEN_LEAD]->(l:OdooLead) WHERE l.date_last_stage_update IS NOT NULL "
+       "RETURN count(l) AS n, min(toString(date(datetime(l.date_last_stage_update)))) AS first")
+want = ask_odoo("crm.lead", "search_read", {"domain": OPEN_LEADS + [["date_last_stage_update", "!=", False]], "fields": ["date_last_stage_update"],
+                                            "order": "date_last_stage_update asc", "limit": 1, "load": ""})
+r = (d.get("rows") or [{}])[0]
+check("date(datetime(date_last_stage_update)) reads every open deal's stage day",
+      not d.get("error") and want and r.get("first") == want[0]["date_last_stage_update"][:10], f"{r} vs {want[:1]} {str(d.get('error'))[:200]}")
 # A business date: invoice_date_due is a DATE column, so a 'T…Z' bound must not reach Odoo as written either.
 d = kg("MATCH (b:OdooBook)-[:HAS_UNPAID_INVOICE]->(i:OdooInvoice) WHERE i.invoice_date_due >= '2000-01-01T00:00:00Z' RETURN count(i) AS n")
 want = ask_odoo("account.move", "search_count", {"domain": UNPAID + [["invoice_date_due", ">=", "2000-01-01"]]})
