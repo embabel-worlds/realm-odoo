@@ -54,6 +54,26 @@ KG=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Cont
   -d '{"cypher":"MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer) RETURN count(DISTINCT c) AS n"}')
 check "kg customer count" "$CUSTOMERS" "$(echo "$KG" | py 'import json,sys;print(json.load(sys.stdin)["rows"][0]["n"])')"
 
+echo "== L1a: the people at every company, more companies than one batched fetch may ask for =="
+# Every company in the book is more companies (6,855 on the demo book) than HAS_ACCOUNT_CONTACT may
+# ask Odoo for at once, so this is answered from the contacts book matched on parent_id — and it
+# must be the people Odoo files under a company, exactly, by Odoo's own search_count.
+PEOPLE=$(curl -s -X POST "$ODOO/json/2/res.partner/search_count" -H "Authorization: Bearer $ODOO_KEY" \
+  -H 'Content-Type: application/json' -d '{"domain":[["is_company","=",false],["parent_id.is_company","=",true]]}')
+KG=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
+  -d '{"cypher":"MATCH (b:OdooBook)-[:HAS_COMPANY]->(k:OdooCustomer)-[:HAS_ACCOUNT_CONTACT]->(ct:OdooContact) RETURN count(DISTINCT ct) AS n"}')
+check "people at every company (vs search_count)" "$PEOPLE" "$(echo "$KG" | py 'import json,sys; d=json.load(sys.stdin); print(d["rows"][0]["n"] if d.get("rows") else "refused: " + str(d.get("error"))[:200])')"
+# The company with the most people, and how many, from Odoo's records: the sweep must put each person
+# under their own company, not only count them.
+BUSIEST=$(curl -s -X POST "$ODOO/json/2/res.partner/search_read" -H "Authorization: Bearer $ODOO_KEY" \
+  -H 'Content-Type: application/json' -d '{"domain":[["is_company","=",false],["parent_id.is_company","=",true]],"fields":["parent_id"],"load":""}' | py "
+import json,sys,collections
+n=collections.Counter(r['parent_id'] for r in json.load(sys.stdin))
+pid,c=sorted(n.items(), key=lambda kv: (-kv[1], kv[0]))[0]; print(f'{pid}:{c}')")
+KG=$(curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
+  -d '{"cypher":"MATCH (b:OdooBook)-[:HAS_COMPANY]->(k:OdooCustomer)-[:HAS_ACCOUNT_CONTACT]->(ct:OdooContact) RETURN toInteger(k.id) AS company, count(ct) AS people ORDER BY people DESC, company LIMIT 1"}')
+check "the company with the most people" "$BUSIEST" "$(echo "$KG" | py 'import json,sys; d=json.load(sys.stdin); r=(d.get("rows") or [{}])[0]; print("%s:%s" % (r.get("company"), r.get("people")))')"
+
 echo "== L1b: the company hierarchy reconciles =="
 # Odoo's own answer: the company with the most companies filed under it, and their ids. The
 # realm must reach exactly those through HAS_SUBSIDIARY, every one of them must lead back up
