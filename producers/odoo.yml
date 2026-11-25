@@ -42,19 +42,17 @@
 #     WIDENS what Odoo returns; the graph re-applies the query's own comparison, so rows stay
 #     exact. A count cannot be re-filtered, so the doors that declare `aggregates:` guard
 #     their `ilike` rules (see AGGREGATES below).
-#   - Dates carry a `valuePattern`. A datetime field (create_date, date_closed, start …) is UTC
-#     and Odoo compares it against 'YYYY-MM-DD' (midnight) or 'YYYY-MM-DD HH:MM:SS'; a date field
-#     (date_deadline, invoice_date_due) against 'YYYY-MM-DD' only. Anything else — an ISO 'T', a
-#     zone offset — is refused by Odoo with an HTTP 500 ("expecting only datetimes with no
-#     timezone"). `>` a bare date is not pushed: Odoo reads the date as midnight, the graph reads
-#     '2026-10-22 00:00:00' as AFTER '2026-10-22', and a record at exactly midnight would be lost.
-#   - create_date, date_closed and invoice_date_due rules also declare `format:`, Odoo's own
-#     spelling, so a bound written in any ISO-8601 form ('2000-01-01T00:00:00Z', a bare day, +00:00)
-#     reaches Odoo re-spelled in it, in UTC, and the valuePattern gates the re-spelled text. The
-#     lead doors store create_date and date_closed as ISO-8601 UTC ('…T…Z', the `compute:` below)
-#     rather than as Odoo's naive text: a re-spelled bound is the instant the GRAPH's comparison of
-#     the written text keeps, so the stored text must compare as that instant too. Stored in Odoo's
-#     spelling, `create_date >= '2000-01-01T00:00:00Z'` was pushed right and then compared wrong.
+#   - Dates carry a `valuePattern` and a `format:`. A datetime field (create_date, date_closed,
+#     date_last_stage_update, date_order, a message's date, a meeting's start and stop) is UTC, and
+#     Odoo compares it against 'YYYY-MM-DD HH:MM:SS' only: an ISO 'T' or a zone is refused with an
+#     HTTP 500 ("expecting only datetimes with no timezone"). A date field (date_deadline,
+#     invoice_date_due) takes 'YYYY-MM-DD'. `format:` is Odoo's spelling, so a bound written in any
+#     ISO-8601 form ('2000-01-01T00:00:00Z', a bare day, +00:00) reaches Odoo re-spelled in it, in
+#     UTC, and the valuePattern gates the re-spelled text.
+#   - The doors store every datetime as ISO-8601 UTC ('…T…Z', the `compute:` on each), not as Odoo's
+#     naive text. A re-spelled bound is the instant the GRAPH's comparison of the written text keeps,
+#     so the stored text must compare as that instant too, and the engine's date functions
+#     (`datetime(l.date_last_stage_update)`) refuse Odoo's spelling as not ISO-8601.
 #   - Odoo's `in` with an empty list matches nothing, which is what an empty Cypher list means.
 #   - ONE rule per property and operator. A `valuePattern` that refuses a value makes the engine
 #     say the filter was not sent (PUSHDOWN_VALUE_UNMATCHED), rule by rule — so two rules that
@@ -117,7 +115,7 @@
     stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE replace(r.create_date, ' ', 'T') + 'Z' END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE replace(r.date_closed, ' ', 'T') + 'Z' END"
-    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE r.date_last_stage_update END"
+    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE replace(r.date_last_stage_update, ' ', 'T') + 'Z' END"
     won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     type: "CASE r.type WHEN false THEN null ELSE r.type END"
@@ -184,10 +182,10 @@
     - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_closed, op: LESS_THAN, argPath: "domain.-", clause: ["date_closed", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
-    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
-    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_deadline, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: date_deadline, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: date_deadline, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
@@ -391,7 +389,7 @@
     partner_id: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
     partnerKey: "CASE r.partner_id WHEN false THEN null ELSE r.partner_id[0] END"
     state: "CASE r.state WHEN false THEN null ELSE r.state END"
-    date_order: "CASE r.date_order WHEN false THEN null ELSE r.date_order END"
+    date_order: "CASE r.date_order WHEN false THEN null ELSE replace(r.date_order, ' ', 'T') + 'Z' END"
     currency: "CASE r.currency_id WHEN false THEN null ELSE r.currency_id[1] END"
     sourceUrl: "'http://localhost:8069/odoo/sale.order/' + toString(r.id)"
   pushdown:
@@ -404,10 +402,10 @@
     - { property: amount_total, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_total", ">=", "{value}"] }
     - { property: amount_total, op: LESS_THAN, argPath: "domain.-", clause: ["amount_total", "<", "{value}"] }
     - { property: amount_total, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["amount_total", "<=", "{value}"] }
-    - { property: date_order, op: GREATER_THAN, argPath: "domain.-", clause: ["date_order", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
-    - { property: date_order, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_order", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_order, op: LESS_THAN, argPath: "domain.-", clause: ["date_order", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_order, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_order", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_order, op: GREATER_THAN, argPath: "domain.-", clause: ["date_order", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_order, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_order", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_order, op: LESS_THAN, argPath: "domain.-", clause: ["date_order", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_order, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_order", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
   paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
   maxKeysPerCall: 200
   # Per customer as numbers: one read_group per measure, grouped by partner, for every key at once.
@@ -647,7 +645,7 @@
     stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE replace(r.create_date, ' ', 'T') + 'Z' END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE replace(r.date_closed, ' ', 'T') + 'Z' END"
-    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE r.date_last_stage_update END"
+    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE replace(r.date_last_stage_update, ' ', 'T') + 'Z' END"
     won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     type: "CASE r.type WHEN false THEN null ELSE r.type END"
@@ -709,10 +707,10 @@
     - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_closed, op: LESS_THAN, argPath: "domain.-", clause: ["date_closed", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
-    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
-    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_deadline, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: date_deadline, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: date_deadline, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
@@ -751,7 +749,7 @@
     stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE replace(r.create_date, ' ', 'T') + 'Z' END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE replace(r.date_closed, ' ', 'T') + 'Z' END"
-    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE r.date_last_stage_update END"
+    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE replace(r.date_last_stage_update, ' ', 'T') + 'Z' END"
     won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
@@ -819,10 +817,10 @@
     - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_closed, op: LESS_THAN, argPath: "domain.-", clause: ["date_closed", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
-    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
-    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_deadline, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: date_deadline, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: date_deadline, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
@@ -900,7 +898,7 @@
     stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE replace(r.create_date, ' ', 'T') + 'Z' END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE replace(r.date_closed, ' ', 'T') + 'Z' END"
-    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE r.date_last_stage_update END"
+    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE replace(r.date_last_stage_update, ' ', 'T') + 'Z' END"
     won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
@@ -963,10 +961,10 @@
     - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_closed, op: LESS_THAN, argPath: "domain.-", clause: ["date_closed", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
-    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
-    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_deadline, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: date_deadline, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: date_deadline, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
@@ -1001,7 +999,7 @@
   compute:
     leadKey: "r.res_id"
     body: "CASE r.body WHEN false THEN null ELSE r.body END"
-    date: "CASE r.date WHEN false THEN null ELSE r.date END"
+    date: "CASE r.date WHEN false THEN null ELSE replace(r.date, ' ', 'T') + 'Z' END"
     author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id[0] END"
     authorName: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
     author: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
@@ -1018,10 +1016,10 @@
     - { property: author_id, op: EQUALS, argPath: "domain.-", clause: ["author_id", "=", "{value}"] }
     - { property: author_id, op: IN, argPath: "domain.-", clause: ["author_id", "in", "{values}"] }
     - { property: authorName, op: EQUALS, argPath: "domain.-", clause: ["author_id.name", "=", "{value}"] }
-    - { property: date, op: GREATER_THAN, argPath: "domain.-", clause: ["date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
-    - { property: date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date, op: GREATER_THAN, argPath: "domain.-", clause: ["date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: writtenOn, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: writtenOn, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: writtenOn, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value} 23:59:59"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
@@ -1049,8 +1047,8 @@
     order: "start asc, id asc"
     limit: 1000
   compute:
-    start: "CASE r.start WHEN false THEN null ELSE r.start END"
-    stop: "CASE r.stop WHEN false THEN null ELSE r.stop END"
+    start: "CASE r.start WHEN false THEN null ELSE replace(r.start, ' ', 'T') + 'Z' END"
+    stop: "CASE r.stop WHEN false THEN null ELSE replace(r.stop, ' ', 'T') + 'Z' END"
     location: "CASE r.location WHEN false THEN null ELSE r.location END"
     description: "CASE r.description WHEN false THEN null ELSE r.description END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id END"
@@ -1063,14 +1061,14 @@
     - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
     - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
     - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
-    - { property: start, op: GREATER_THAN, argPath: "domain.-", clause: ["start", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
-    - { property: start, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["start", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: start, op: LESS_THAN, argPath: "domain.-", clause: ["start", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: start, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["start", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: stop, op: GREATER_THAN, argPath: "domain.-", clause: ["stop", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
-    - { property: stop, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["stop", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: stop, op: LESS_THAN, argPath: "domain.-", clause: ["stop", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: stop, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["stop", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: start, op: GREATER_THAN, argPath: "domain.-", clause: ["start", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: start, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["start", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: start, op: LESS_THAN, argPath: "domain.-", clause: ["start", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: start, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["start", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: stop, op: GREATER_THAN, argPath: "domain.-", clause: ["stop", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: stop, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["stop", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: stop, op: LESS_THAN, argPath: "domain.-", clause: ["stop", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: stop, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["stop", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: startsOn, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["start", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: startsOn, op: LESS_THAN, argPath: "domain.-", clause: ["start", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: startsOn, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["start", "<=", "{value} 23:59:59"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
@@ -1290,7 +1288,7 @@
     stage_id: "CASE r.stage_id WHEN false THEN null ELSE r.stage_id[0] END"
     create_date: "CASE r.create_date WHEN false THEN null ELSE replace(r.create_date, ' ', 'T') + 'Z' END"
     date_closed: "CASE r.date_closed WHEN false THEN null ELSE replace(r.date_closed, ' ', 'T') + 'Z' END"
-    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE r.date_last_stage_update END"
+    date_last_stage_update: "CASE r.date_last_stage_update WHEN false THEN null ELSE replace(r.date_last_stage_update, ' ', 'T') + 'Z' END"
     won_status: "CASE r.won_status WHEN false THEN null ELSE r.won_status END"
     date_deadline: "CASE r.date_deadline WHEN false THEN null ELSE r.date_deadline END"
     user_id: "CASE r.user_id WHEN false THEN null ELSE r.user_id[0] END"
@@ -1352,10 +1350,10 @@
     - { property: date_closed, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_closed, op: LESS_THAN, argPath: "domain.-", clause: ["date_closed", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_closed, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_closed", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
-    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
-    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date_last_stage_update, op: GREATER_THAN, argPath: "domain.-", clause: ["date_last_stage_update", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: LESS_THAN, argPath: "domain.-", clause: ["date_last_stage_update", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date_last_stage_update, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_last_stage_update", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: date_deadline, op: GREATER_THAN, argPath: "domain.-", clause: ["date_deadline", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: date_deadline, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date_deadline", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: date_deadline, op: LESS_THAN, argPath: "domain.-", clause: ["date_deadline", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
@@ -1590,7 +1588,7 @@
     limit: 1000
   compute:
     body: "CASE r.body WHEN false THEN null ELSE r.body END"
-    date: "CASE r.date WHEN false THEN null ELSE r.date END"
+    date: "CASE r.date WHEN false THEN null ELSE replace(r.date, ' ', 'T') + 'Z' END"
     author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id[0] END"
     authorName: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
     author: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
@@ -1608,10 +1606,10 @@
     - { property: author_id, op: EQUALS, argPath: "domain.-", clause: ["author_id", "=", "{value}"] }
     - { property: author_id, op: IN, argPath: "domain.-", clause: ["author_id", "in", "{values}"] }
     - { property: authorName, op: EQUALS, argPath: "domain.-", clause: ["author_id.name", "=", "{value}"] }
-    - { property: date, op: GREATER_THAN, argPath: "domain.-", clause: ["date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
-    - { property: date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date, op: GREATER_THAN, argPath: "domain.-", clause: ["date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: writtenOn, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: writtenOn, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: writtenOn, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value} 23:59:59"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
@@ -1729,7 +1727,7 @@
   compute:
     model: "CASE r.model WHEN false THEN null ELSE r.model END"
     body: "CASE r.body WHEN false THEN null ELSE r.body END"
-    date: "CASE r.date WHEN false THEN null ELSE r.date END"
+    date: "CASE r.date WHEN false THEN null ELSE replace(r.date, ' ', 'T') + 'Z' END"
     author_id: "CASE r.author_id WHEN false THEN null ELSE r.author_id[0] END"
     authorName: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
     author: "CASE r.author_id WHEN false THEN null ELSE r.author_id[1] END"
@@ -1753,10 +1751,10 @@
     - { property: author_id, op: EQUALS, argPath: "domain.-", clause: ["author_id", "=", "{value}"] }
     - { property: author_id, op: IN, argPath: "domain.-", clause: ["author_id", "in", "{values}"] }
     - { property: authorName, op: EQUALS, argPath: "domain.-", clause: ["author_id.name", "=", "{value}"] }
-    - { property: date, op: GREATER_THAN, argPath: "domain.-", clause: ["date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$' }
-    - { property: date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
-    - { property: date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$' }
+    - { property: date, op: GREATER_THAN, argPath: "domain.-", clause: ["date", ">", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
+    - { property: date, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)$', format: "yyyy-MM-dd HH:mm:ss" }
     - { property: writtenOn, op: GREATER_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", ">=", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: writtenOn, op: LESS_THAN, argPath: "domain.-", clause: ["date", "<", "{value}"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
     - { property: writtenOn, op: LESS_THAN_OR_EQUAL, argPath: "domain.-", clause: ["date", "<=", "{value} 23:59:59"], valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
