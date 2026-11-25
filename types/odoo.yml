@@ -9,7 +9,8 @@
 #
 # TWO CLOCKS. Odoo keeps two kinds of date, and a question has to say which it means:
 #   - the SYSTEM clock — create_date, date_closed, date_last_stage_update, a message's date:
-#     when Odoo was told, stamped by the server, in UTC, as 'YYYY-MM-DD HH:MM:SS'. On a book that
+#     when Odoo was told, stamped by the server, in UTC (a deal's create_date and date_closed as
+#     ISO-8601 'YYYY-MM-DDTHH:MM:SSZ', the others as Odoo's 'YYYY-MM-DD HH:MM:SS'). On a book that
 #     was imported or seeded these are the load time, not when the deal really began;
 #   - BUSINESS dates — date_deadline, invoice_date, invoice_date_due: what a person agreed or
 #     typed, as 'YYYY-MM-DD' with no time and no zone.
@@ -17,6 +18,10 @@
 # filters, and they sort against the stored strings exactly. An ISO 'T' does not
 # ('2026-10-22T09:00' sorts after every '2026-10-22 …'). `date()` in a query is the APPLIANCE's
 # day, which is not necessarily the business's.
+#
+# Every date property declares its shape as `format:`, and every money property its currency as
+# `currency: currency` (the row's ISO code is in `currency`); a model writing a query sees both
+# under the type, so the descriptions say only what those fields cannot — which clock, and why.
 
 - name: OdooStagePipeline
   visibility: internal
@@ -55,11 +60,11 @@
     title: "The deal's title (the vocabulary's name for `name`)."
     partner_id: "The customer's partner id (bare). LEAD_OF reaches the customer itself."
     type: "Odoo's own split: 'opportunity' (in the pipeline) or 'lead' (not yet qualified). Every door carries both; filter on it to mean one."
-    expected_revenue: { type: float, description: "Expected revenue, in the company currency (`currency`), major units: 12500.0 is 12,500.00. Odoo's own figure, never recomputed." }
-    amount: { type: float, description: "The deal value (the vocabulary's name for expected_revenue), in major units of `currency`." }
+    expected_revenue: { type: float, currency: currency, description: "Expected revenue, major units: 12500.0 is 12,500.00, in the company currency. Odoo's own figure, never recomputed." }
+    amount: { type: float, currency: currency, description: "The deal value (the vocabulary's name for expected_revenue), in major units." }
     currency: "ISO 4217 code of the company currency every amount here is in, e.g. 'USD'."
-    probability: { type: float, description: "Win probability as a FRACTION 0–1 (the vocabulary's meaning): 0.65 is 65%. 1.0 on won, 0 on lost. Not filtered by Odoo — filter on probabilityPercent." }
-    probabilityPercent: { type: float, description: "Win probability as Odoo states it, 0–100: 65 is 65%. 100 on won, 0 on lost. `l.probabilityPercent >= 60` is applied by Odoo." }
+    probability: { type: float, unit: fraction, description: "Win probability as a FRACTION 0–1 (the vocabulary's meaning): 0.65 is 65%. 1.0 on won, 0 on lost. Not filtered by Odoo — filter on probabilityPercent." }
+    probabilityPercent: { type: float, unit: percent, description: "Win probability as Odoo states it, 0–100: 65 is 65%. 100 on won, 0 on lost. `l.probabilityPercent >= 60` is applied by Odoo." }
     priority: "Odoo's priority code as stored: '0' low, '1' medium, '2' high, '3' very high (the stars on a card). Read priorityLabel."
     priorityLabel: "Priority in words: low, medium, high or very_high. Filtered in the graph; Odoo is asked for nothing on it."
     email_from: "Email of the contact the lead came from, as typed."
@@ -68,11 +73,11 @@
     won_status: "Odoo's verdict: 'pending' (still open), 'won', or 'lost'. A deal archived without being lost stays 'pending' but is not in the pipeline (active=false)."
     status: "'open', 'won' or 'lost' (won_status, 'pending' read as 'open'). Odoo applies 'won'/'lost'; for open deals use HAS_OPEN_LEAD or won_status = 'pending'."
     active: "False once the deal is archived — which is how Odoo marks a LOST deal, and which hides it from Odoo's own lists. The pipeline doors read active deals only."
-    create_date: "SYSTEM clock: when the record was created in Odoo, UTC, 'YYYY-MM-DD HH:MM:SS'. On an imported or seeded book this is the load time, not when the deal began."
-    date_closed: "SYSTEM clock: when the deal was marked won or lost, UTC, 'YYYY-MM-DD HH:MM:SS'. Null while open. The close date for 'won last quarter'."
-    date_deadline: "BUSINESS date: the expected closing date the salesperson set, 'YYYY-MM-DD', no zone. Null when nobody set one."
-    date_last_stage_update: "SYSTEM clock: when the deal last moved stage, UTC, 'YYYY-MM-DD HH:MM:SS'. How long a deal has sat still."
-    closeOn: "'YYYY-MM-DD': date_deadline while open; the UTC day of date_closed once decided. Odoo applies a window on it through HAS_DECIDED_LEAD."
+    create_date: { format: "ISO 8601 timestamp, UTC (yyyy-MM-ddTHH:mm:ssZ)", description: "SYSTEM clock: when the record was created in Odoo. On an imported or seeded book this is the load time, not when the deal began." }
+    date_closed: { format: "ISO 8601 timestamp, UTC (yyyy-MM-ddTHH:mm:ssZ)", description: "SYSTEM clock: when the deal was marked won or lost. Null while open. The close date for 'won last quarter'." }
+    date_deadline: { format: yyyy-MM-dd, description: "BUSINESS date: the expected closing date the salesperson set, no zone. Null when nobody set one." }
+    date_last_stage_update: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "SYSTEM clock: when the deal last moved stage. How long a deal has sat still." }
+    closeOn: { format: yyyy-MM-dd, description: "date_deadline while open; the UTC day of date_closed once decided. Odoo applies a window on it through HAS_DECIDED_LEAD." }
     lostReason: "Why a lost deal was lost, as Odoo names the reason ('Too expensive'). Only through HAS_DECIDED_LEAD; null when none was given."
     user_id: "The salesperson's Odoo user id (bare). Their NAME is `ownerName`."
     ownerName: "The salesperson who owns the deal, by name. `l.ownerName = $name` is applied by Odoo."
@@ -116,8 +121,8 @@
   # TRACKED_AS leads back here, and from here to Odoo's opportunities, contacts and notes.
   parents: [CrmAccount]
   description: >-
-    One Odoo partner (res.partner), identified by `id`: a COMPANY (is_company 'true') or a
-    PERSON/address ('false'). parent_id means two things: on a company its parent company, on a
+    One Odoo partner (res.partner), identified by `id`: a COMPANY (is_company true) or a
+    PERSON/address (false). parent_id means two things: on a company its parent company, on a
     person their employer. One company by name is one call: MATCH
     (b:OdooBook)-[:HAS_COMPANY]->(c) WHERE c.name = $name (exact, case and all).
     Which door: HAS_CUSTOMER — partners we have sold to or invoiced (customer_rank > 0), companies
@@ -136,7 +141,7 @@
     city: "City of the partner's address, as typed in Odoo."
     country_id: "Country id (bare). The country's NAME is `country`."
     country: "The country, by name ('Australia')."
-    is_company: "Whether the partner is a company: the STRING 'true' for a company, 'false' for a person or an address. Write `c.is_company = 'true'`."
+    is_company: { type: boolean, description: "True for a company, false for a person or an address. Write `c.is_company = true`; Odoo applies it, and counts it." }
     # What identifies the COMPANY, as opposed to `id`, which identifies Odoo's record of it and
     # is what every join in this realm keys on. The spine normalizes; this realm sends the URL
     # exactly as Odoo holds it.
@@ -166,7 +171,7 @@
   virtualJoins:
     - { anchorLabel: OdooBook, relationship: HAS_CUSTOMER, keyField: scope,
         recordKeyField: scopeKey, producer: customersAll, maxFanoutTotal: 50000,
-        description: "Every partner we have sold to or invoiced (customer_rank > 0) — mostly companies, and any person invoiced directly." }
+        description: "Every partner we have sold to or invoiced (customer_rank > 0) — mostly companies, and any person invoiced directly. How many is one search_count, filters and all." }
     # Prospects too. HAS_CUSTOMER is who has BOUGHT; an account-level question is as often about
     # a company sales is still courting, and it has to be an account before anything can be
     # said about it.
@@ -175,14 +180,16 @@
     # company as the CRM knows it", prospects included, which is this one.
     - { anchorLabel: OdooBook, relationship: HAS_COMPANY, keyField: scope,
         recordKeyField: scopeKey, producer: companiesAll, maxFanoutTotal: 50000, implicitDoor: true,
-        description: "Every company the CRM knows — customers and prospects alike. The door for ONE company: `WHERE c.name = $name` or `c.id = $id` is one call." }
+        description: "Every company the CRM knows — customers and prospects alike. The door for ONE company: `WHERE c.name = $name` or `c.id = $id` is one call; how many is one search_count." }
     # BOTH SIDES. HAS_CUSTOMER and HAS_COMPANY each reach companies only; this reaches the
     # PEOPLE too, which is what a question about notes needs — most chatter is written on a
-    # contact, not on the company record. Split them afterwards on `is_company`, which Odoo
-    # spells as the STRING 'true'/'false', not a boolean.
+    # contact, not on the company record. Split them afterwards on `is_company`, a boolean:
+    # `c.is_company = true`. It was once described as the string 'true', and a records read
+    # compared that way matched nothing while Odoo's count, given the same filter, matched every
+    # company.
     - { anchorLabel: OdooBook, relationship: HAS_PARTNER, keyField: scope,
         recordKeyField: scopeKey, producer: partnersAll, maxFanoutTotal: 50000,
-        description: "Every partner in the book — companies AND the people at them. The door for a question that must not stop at company records." }
+        description: "Every partner in the book — companies AND the people at them. The door for a question that must not stop at company records; how many is one search_count." }
     # Per-element join over the meeting's attendee LIST — one meeting fans out to each
     # attendee partner, so "who am I meeting and what do they owe us" is one traversal.
     - { anchorLabel: OdooMeeting, relationship: MEETING_WITH, keyField: partner_ids,
@@ -242,12 +249,12 @@
     id: { description: "Odoo account.move id. Write it quoted ('512').", metadata: { identity: "true" } }
     name: "Invoice number ('INV/2026/00042'). Odoo's demo data repeats some numbers; join on id, never on this."
     partner_id: "The partner the invoice is made out to (bare id) — usually the company, sometimes a person there. INVOICE_OF reaches it."
-    amount_total: { type: float, description: "Invoice total, tax included, in `currency`, major units." }
-    amount_residual: { type: float, description: "What is still owed on it, in `currency`, major units. Equals amount_total when nothing has been paid." }
+    amount_total: { type: float, currency: currency, description: "Invoice total, tax included, major units." }
+    amount_residual: { type: float, currency: currency, description: "What is still owed on it, major units. Equals amount_total when nothing has been paid." }
     currency: "ISO 4217 code of the invoice's currency ('USD'). Sum amounts only within one currency."
     currency_id: "Currency id (bare). Its code is `currency`."
-    invoice_date: "BUSINESS date the invoice was issued, 'YYYY-MM-DD'."
-    invoice_date_due: "BUSINESS date payment is due, 'YYYY-MM-DD'. Overdue is `i.invoice_date_due < '<today>'`, applied by Odoo."
+    invoice_date: { format: yyyy-MM-dd, description: "BUSINESS date the invoice was issued." }
+    invoice_date_due: { format: yyyy-MM-dd, description: "BUSINESS date payment is due. Overdue is `i.invoice_date_due < '<today>'`, applied by Odoo." }
     payment_state: "'not_paid' (nothing received) or 'partial' (part received). Paid invoices are not reachable here."
     sourceUrl: "Opens this invoice in Odoo."
     partnerKey: "The partner id this invoice is attributed to — the same as partner_id."
@@ -281,10 +288,10 @@
     id: { description: "Odoo sale.order id.", metadata: { identity: "true" } }
     name: "Order reference ('S00042')."
     partner_id: "Customer id (bare)."
-    amount_total: { type: float, description: "Order total, tax included, in `currency`, major units." }
+    amount_total: { type: float, currency: currency, description: "Order total, tax included, major units." }
     currency: "ISO 4217 code of the order's currency."
     state: "'draft' or 'sent' (still a quotation), 'sale' (confirmed), 'done' (locked), 'cancel' (cancelled)."
-    date_order: "Order date, UTC, 'YYYY-MM-DD HH:MM:SS' — the quotation date until confirmed, then the confirmation date."
+    date_order: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "Order date: the quotation date until confirmed, then the confirmation date." }
     sourceUrl: "Opens this order in Odoo."
     partnerKey: "The partner id this order is attributed to — the same as partner_id."
   virtualJoins:
@@ -360,8 +367,8 @@
       identity: true
       description: "Odoo mail.message id."
     body: "Message body, as HTML. Strip tags before judging it."
-    date: "SYSTEM clock: when it was posted, UTC, 'YYYY-MM-DD HH:MM:SS'. A back-dated import carries the date it was written."
-    writtenOn: "The UTC day it was posted, 'YYYY-MM-DD' (the vocabulary's AccountNote.writtenOn)."
+    date: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "SYSTEM clock: when it was posted. A back-dated import carries the date it was written." }
+    writtenOn: { format: yyyy-MM-dd, description: "The UTC day it was posted (the vocabulary's AccountNote.writtenOn)." }
     subject: "Subject, when the message was an email."
     message_type: "'comment' (an internal note or a logged message) or 'email'."
     res_id: "The id of the record it was written on — in the model `model` names."
@@ -422,9 +429,9 @@
       description: "Odoo calendar.event id."
     name: "Meeting subject."
     title: "Meeting subject (the vocabulary's name)."
-    start: "Start, UTC, 'YYYY-MM-DD HH:MM:SS'."
-    stop: "End, UTC, 'YYYY-MM-DD HH:MM:SS'."
-    startsOn: "The UTC day it starts, 'YYYY-MM-DD'."
+    start: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "When the meeting starts, UTC. On an all-day event the time carries no meaning." }
+    stop: { format: "yyyy-MM-dd HH:mm:ss, UTC", description: "When the meeting ends, UTC." }
+    startsOn: { format: yyyy-MM-dd, description: "The UTC day it starts." }
     allday: "True for an all-day event, whose start and stop carry no meaningful time."
     location: "Location, when set."
     description: "Agenda / notes, when set (HTML)."
@@ -460,8 +467,8 @@
     res_id: "Id of that record, in the model res_model names."
     partnerId: "res_id when the activity hangs on a partner (res.partner); null on a deal or anything else."
     res_name: "Display name of that record."
-    date_deadline: "BUSINESS date it is due, 'YYYY-MM-DD'."
-    dueOn: "The day it is due (the vocabulary's name for date_deadline)."
+    date_deadline: { format: yyyy-MM-dd, description: "BUSINESS date it is due." }
+    dueOn: { format: yyyy-MM-dd, description: "The day it is due (the vocabulary's name for date_deadline)." }
     user_id: "The assignee's Odoo user id. Their NAME is `ownerName`."
     ownerName: "Who on our side is to do it, by name."
     sourceUrl: "Opens the record it hangs on, in Odoo."

@@ -69,7 +69,135 @@
     rules intact. Nothing mirrored, nothing invented; AI reads are labelled and grounded on the
     rows above them. Triage and sentiment are model-made labels from each deal's own chatter,
     shown beside exact figures, never instead of them.
+    <a class="o_howlink" href="#how-it-works">How it works</a>
   </footer>
+  <!-- HOW IT WORKS. Hidden until the footer link targets it, so it survives a reload. The Cypher
+       below is each view's body as views/*.yml ships it; a change to a view changes this too. -->
+  <section id="how-it-works" class="o_how">
+    <h2>How it works</h2>
+
+    <h3>The data</h3>
+    <p>Everything here is read from Odoo at load, through its own JSON-2 API as the key's user, so
+      Odoo's record rules apply. Nothing is copied into the appliance: deals (<code>crm.lead</code>),
+      partners (<code>res.partner</code>), unpaid posted customer invoices (<code>account.move</code>),
+      calendar meetings and chatter are realm-odoo's types <code>OdooLead</code>, <code>OdooCustomer</code>,
+      <code>OdooInvoice</code>, <code>OdooMeeting</code> and <code>OdooMessage</code>. Reads are cached:
+      partners for 15 minutes, deals, invoices, meetings and chatter for 5. A figure that differs from
+      Odoo inside that window is the cache. Money is in each row's own currency, in major units.
+      Firmographics and news appear only when realm-odoo-enrichment is installed.</p>
+
+    <h3>The questions</h3>
+    <p><b>OdooPipelineReceivables</b> (the cards): every active deal at the chosen stage, with what
+      its customer still owes. Parameters: <code>stage</code> (default 'Proposition', the stage's exact
+      name), <code>limit</code> (default 50 rows).</p>
+    <pre>MATCH (q:OdooStagePipeline {stage: $stage})-[:HAS_LEAD]-&gt;(l:OdooLead)-[:LEAD_OF]-&gt;(c:OdooCustomer)
+OPTIONAL MATCH (c)-[:HAS_UNPAID_INVOICE]-&gt;(i:OdooInvoice)
+RETURN c.id                 AS customerId,
+       c.name               AS customer,
+       c.email              AS email,
+       l.id                 AS leadId,
+       l.name               AS opportunity,
+       l.expected_revenue   AS expectedRevenue,
+       l.currency           AS currency,
+       l.probabilityPercent AS probabilityPercent,
+       i.id                 AS invoiceId,
+       i.name               AS invoice,
+       i.amount_residual    AS owed,
+       i.currency           AS owedCurrency,
+       i.invoice_date_due   AS due
+ORDER BY customer, owed DESC
+LIMIT $limit</pre>
+    <p><b>OdooDealTriage</b> (the pills on each deal): the largest open deals, each labelled by a model.
+      <code>strategic</code>: large value or a major company; <code>at_risk</code>: the chatter or the odds
+      say it is stalling, whatever its size; <code>standard</code>: everything else. Sentiment is
+      positive, neutral or negative from the deal's own chatter, and empty when nobody has written on it.
+      Parameters: <code>triage</code> (default empty, every label), <code>limit</code> (default 50).</p>
+    <pre>MATCH (b:OdooBook)-[:HAS_OPEN_LEAD]-&gt;(l:OdooLead)
+WITH l ORDER BY l.expected_revenue DESC LIMIT $limit
+MATCH (l)-[:LEAD_OF]-&gt;(c:OdooCustomer)
+OPTIONAL MATCH (l)-[:HAS_MESSAGE]-&gt;(msg:OdooMessage)
+WITH l, c, collect(DISTINCT msg.body) AS bodies
+OPTIONAL MATCH (c)-[:HAS_DIFFBOT_ORG]-&gt;(d:DiffbotOrganization)
+WITH l, c, bodies, d,
+     CASE WHEN size(bodies) = 0 THEN &#x27;&#x27;
+          ELSE reduce(s = &#x27;&#x27;, x IN bodies[0..6] | s + &#x27; | &#x27; + coalesce(x,&#x27;&#x27;)) END AS thread
+WITH l, c, d, thread,
+     classify(l.name + &#x27; — &#x27; + c.name +
+       CASE WHEN d IS NULL THEN &#x27;&#x27;
+            ELSE &#x27; (&#x27; + coalesce(toString(d.nbEmployees),&#x27;?&#x27;) + &#x27; employees)&#x27; END +
+       &#x27;, $&#x27; + coalesce(toString(l.expected_revenue),&#x27;?&#x27;) +
+       &#x27; at &#x27; + coalesce(toString(l.probabilityPercent),&#x27;?&#x27;) + &#x27;% win probability&#x27; +
+       CASE WHEN thread = &#x27;&#x27; THEN &#x27; | no recent interactions&#x27;
+            ELSE &#x27; | thread: &#x27; + thread END,
+       &#x27;strategic,standard,at_risk&#x27;,
+       &#x27;One open sales opportunity. strategic: large value or a major company, worth leadership attention. at_risk: the interactions or odds say it is stalling or souring, whatever its size. standard: everything else.&#x27;) AS triage
+WHERE $triage = &#x27;&#x27; OR triage = $triage
+RETURN l.id AS leadId, l.name AS deal, c.id AS customerId, c.name AS customer,
+       l.expected_revenue AS revenue, l.currency AS currency, l.probabilityPercent AS probabilityPercent,
+       toInteger(d.nbEmployees) AS headcount,
+       classify(thread, &#x27;positive,neutral,negative&#x27;,
+         &#x27;Each item is the recent chatter on one sales opportunity. Judge the current disposition of the customer toward the deal from what was actually written.&#x27;) AS sentiment,
+       triage
+ORDER BY revenue DESC</pre>
+    <p><b>OdooMeetingBriefing</b> (the briefings strip): each upcoming meeting, with what the attendee
+      owes, their open deals and a short briefing a model writes from those facts only. Parameter:
+      <code>customer</code> (default empty, every upcoming meeting).</p>
+    <pre>MATCH (b:OdooBook)-[:HAS_MEETING]-&gt;(m:OdooMeeting)-[:MEETING_WITH]-&gt;(c:OdooCustomer)
+WHERE m.start &gt;= toString(date()) AND ($customer = &#x27;&#x27; OR c.name = $customer)
+OPTIONAL MATCH (c)-[:HAS_UNPAID_INVOICE]-&gt;(i:OdooInvoice)
+WITH b, m, c, count(DISTINCT i) AS unpaid, coalesce(sum(i.amount_residual),0) AS owed
+OPTIONAL MATCH (c)-[:HAS_OPPORTUNITY]-&gt;(l:OdooLead) WHERE l.won_status = &#x27;pending&#x27;
+OPTIONAL MATCH (l)-[:HAS_MESSAGE]-&gt;(msg:OdooMessage)
+WITH m, c, unpaid, owed, l, collect(DISTINCT msg.body) AS bodies
+WITH m, c, unpaid, owed,
+     collect(DISTINCT CASE WHEN l IS NULL THEN NULL ELSE
+       &#x27;open deal &quot;&#x27; + l.name + &#x27;&quot;: $&#x27; + coalesce(toString(l.expected_revenue),&#x27;?&#x27;) +
+       &#x27; at &#x27; + coalesce(toString(l.probabilityPercent),&#x27;?&#x27;) + &#x27;% win probability&#x27; +
+       CASE WHEN size(bodies) &gt; 0
+            THEN &#x27; -- thread: &#x27; + reduce(s = &#x27;&#x27;, x IN bodies[0..4] | s + &#x27; | &#x27; + coalesce(x,&#x27;&#x27;))
+            ELSE &#x27; -- no recent thread&#x27; END
+     END) AS dealFacts
+OPTIONAL MATCH (c)-[:HAS_DIFFBOT_ORG]-&gt;(d:DiffbotOrganization)
+OPTIONAL MATCH (c)-[:HAS_NEWS]-&gt;(n:NewsItem)
+WITH m, c, unpaid, owed, dealFacts, d,
+     collect(DISTINCT CASE WHEN d IS NULL THEN NULL ELSE n.title END)[0..3] AS headlines
+WITH m, c, unpaid, owed,
+     &#x27;Meeting: &#x27; + m.name + &#x27; on &#x27; + m.start + &#x27; with &#x27; + c.name + &#x27;. &#x27; +
+     CASE WHEN owed &gt; 0 THEN &#x27;They owe us $&#x27; + toString(owed) + &#x27; across &#x27; + toString(unpaid) + &#x27; unpaid invoice(s). &#x27;
+          ELSE &#x27;They have no unpaid invoices. &#x27; END +
+     CASE WHEN size(dealFacts) = 0 THEN &#x27;No open deals. &#x27; ELSE reduce(s = &#x27;&#x27;, f IN dealFacts | s + f + &#x27; &#x27;) END +
+     CASE WHEN d IS NULL THEN &#x27;No firmographics resolved for this customer. &#x27;
+          ELSE &#x27;Company: &#x27; + coalesce(toString(d.nbEmployees),&#x27;?&#x27;) + &#x27; employees&#x27; +
+               coalesce(&#x27;, ultimately owned by &#x27; + d.ultimateParentName, &#x27;&#x27;) + &#x27;. &#x27; END +
+     CASE WHEN size(headlines) = 0 THEN &#x27;No recent news found.&#x27;
+          ELSE &#x27;Recent news: &#x27; + reduce(s = &#x27;&#x27;, h IN headlines | s + coalesce(h,&#x27;&#x27;) + &#x27;; &#x27;) END
+     AS factText
+RETURN m.id AS meetingId, m.name AS meeting, m.start AS starts,
+       c.id AS customerId, c.name AS customer, owed, unpaid AS unpaidInvoices,
+       synthesize(factText, &#x27;a meeting briefing for the salesperson attending: 4-6 sentences of plain prose, using ONLY these facts, never inventing or softening; if news is present mention the most relevant item; end with the one thing to raise&#x27;) AS briefing
+ORDER BY starts</pre>
+    <p><b>Ask</b> writes Virtual Cypher for your question and runs it; the query it ran is shown under
+      the answer.</p>
+
+    <h3>When it looks wrong</h3>
+    <ul>
+      <li><b>"No open opportunities at …"</b>: no active deal sits at that stage. Stage names are each
+        business's own; pick another.</li>
+      <li><b>A deal with no invoice beside it</b>: its customer owes nothing that is posted and unpaid.
+        Paid and draft invoices are not shown.</li>
+      <li><b>No briefings strip</b>: no meeting starts today or later (the appliance's date, UTC).</li>
+      <li><b>No pills</b>: the deal is not among the 50 largest open deals, so it was not triaged.</li>
+      <li><b>"Could not reach the world"</b>: the appliance or Odoo did not answer. The realm's
+        status page says which.</li>
+    </ul>
+
+    <h3>What made this possible</h3>
+    <p>The page asks the world for three views by name at load; there is no backend of its own to
+      deploy. The join from a deal to its customer and to their unpaid invoices is a declared edge, read
+      from Odoo in one batched call per hop rather than one call per deal. The triage and the briefing
+      are <code>classify()</code> and <code>synthesize()</code> inside the same query that fetched the
+      rows, so a label is computed from the deal it sits on, with its rubric shown above.</p>
+  </section>
   <script src="prospect.js"></script>
 <div id="embabel-badge" style="position:fixed;bottom:0;left:0;right:0;text-align:center;padding:6px 0;background:rgba(10,10,15,0.9);border-top:1px solid rgba(99,192,245,0.2);font-size:0.75rem;color:#6b7280;z-index:9999;pointer-events:none;">
   Created with <a href="https://worlds.embabel.com" target="_blank" rel="noopener noreferrer" style="color:#63c0f5;text-decoration:none;pointer-events:auto;">Embabel Worlds</a>
