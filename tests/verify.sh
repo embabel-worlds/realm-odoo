@@ -19,72 +19,12 @@ check() { # name expected actual
   else echo "  FAIL $1: expected $2, got $3"; fail=1; fi
 }
 py() { python3 -c "$1"; }
-# Whether an answer is the whole truth is the ENGINE's to say, and it says it beside the rows: a
-# query's `error`, `reason` and `warnings` (each opening with its code), a view's `status`,
-# `outcome` and `warnings`. A figure read past them reports a source that failed under load, or a
-# page it capped, as drift in the realm. So every figure goes through short(): a refusal reads
-# REFUSED and a short answer PARTIAL <figure>: <the engine's reason>, which no check expects.
-# Exported, so each Python leg below runs the same definition (`exec(os.environ["SHORT_PY"])`).
-SHORT_PY=$(cat <<'PY'
-import json, sys
-# Raw warning codes that mean rows or values may be missing (the engine's incompleteness kinds).
-# Cost notes (FILTERED_IN_GRAPH, AGGREGATE_NOT_PUSHED, EMPTY_NOT_KEPT, PUSHDOWN_VALUE_UNMATCHED),
-# FILTER_STARVED (an honest empty), STALE_COPY, FIELDS_WITHHELD and UNKNOWN_VIA leave every row in place.
-SHORT_CODES = (
-    "PARTIAL_RESULT", "PRODUCER_ERROR", "NEEDS_FILTER", "NEEDS_PRODUCER", "FILTER_REJECTED",
-    "UNPUSHED_FILTER", "AMBIGUOUS_LABEL", "INCOMPLETE_TRAVERSAL", "INCOMPLETE_RANKING",
-    "INCOMPLETE_AGGREGATE", "INCOMPLETE_INPUT", "MATERIALIZATION_FAILED", "REDUCTION_FAILED",
-    "UNPARSEABLE_ANSWER", "TERMS_UNAVAILABLE", "COMPUTE_FAILED", "PROPERTY_NOT_STORED",
-    "FOLLOW_CAPPED", "UNLINKED_CHILDREN", "RESOLUTION_DROPPED", "AGENTIC_DEGRADED",
-    "SOURCE_UNANSWERED",
-)
-# The typed `reason` a query result carries when it is not a clean answer and not an honest empty.
-SHORT_REASONS = ("UNBOUNDED", "PARTIAL_NOT_MATCHED", "UNPUSHED_FILTER", "DISCONNECTED",
-                 "INTERNAL_ERROR", "WRITE_IN_PROGRESS", "KILLED", "TOO_EXPENSIVE")
-# Public warning codes on a view envelope that mean the same.
-SHORT_PUBLIC = ("PARTIAL", "REDUCTION_FAILED", "COMPUTE_FAILED", "PROPERTY_NOT_STORED",
-                "AGENTIC_DEGRADED", "RATE_LIMITED", "SOURCE_UNAVAILABLE", "SOURCE_REJECTED",
-                "INVALID_FILTER", "UNPUSHED_FILTER", "TOO_BROAD", "FETCH_CAPPED",
-                "INDEX_UNAVAILABLE", "ARGUMENT_REFUSED")
-
-
-def short(d, figure=None):
-    tag = "PARTIAL" if figure is None else "PARTIAL %s" % (figure,)
-    if not isinstance(d, dict):
-        return "REFUSED: not an engine answer: " + str(d)[:160]
-    if "outcome" in d or "status" in d:  # a view envelope
-        err = d.get("error") or {}
-        if d.get("status") != "SUCCEEDED":
-            return "REFUSED: %s %s" % (d.get("status"), (err.get("code", "") + " " + err.get("message", "")).strip()[:160] if isinstance(err, dict) else str(err)[:160])
-        ws = [w for w in d.get("warnings") or [] if isinstance(w, dict) and w.get("code") in SHORT_PUBLIC]
-        if d.get("outcome") not in ("OK", "EMPTY") or ws:
-            why = ws[0]["code"] + ": " + ws[0].get("message", "") if ws else "outcome " + str(d.get("outcome"))
-            return "%s: %s" % (tag, why[:200])
-        return None
-    if d.get("error"):
-        return "REFUSED: " + str(d["error"])[:160]
-    if d.get("run"):
-        return "%s: the run had not finished (%s)" % (tag, d["run"])
-    ws = [w for w in d.get("warnings") or [] if isinstance(w, str) and w.split(":", 1)[0].strip() in SHORT_CODES]
-    if ws:
-        return "%s: %s" % (tag, ws[0][:200])
-    if d.get("reason") in SHORT_REASONS:
-        return "%s: reason %s" % (tag, d["reason"])
-    return None
-PY
-)
-export SHORT_PY
-# The figure in column n of a query answer.
-n() { printf '%s' "$1" | python3 -c "$SHORT_PY
-d = json.loads(sys.stdin.read(), strict=False); r = d.get('rows') or []
-v = r[0].get('n') if r else 0
-print(short(d, v) or v)"; }
-# whole ANSWER SNIPPET: run SNIPPET over the parsed answer, as `d`, only when the engine says it is
-# whole; otherwise print why it is not, in place of the figure.
-whole() { printf '%s' "$1" | python3 -c "$SHORT_PY
-d = json.loads(sys.stdin.read(), strict=False); s = short(d)
-if s: print(s); sys.exit(0)
-$2"; }
+# Whether an answer is the whole truth is the ENGINE's to say, and it says it beside the rows. Every
+# figure here goes through the battery library (tests/lib, pinned from realm-spec): n, rows and
+# whole print REFUSED or PARTIAL <figure>: <the engine's reason> in place of a figure that is not
+# the whole truth, which no check expects. short.sh exports SHORT_PY, so each Python leg below runs
+# the same definition with `exec(os.environ["SHORT_PY"])`.
+. "$(dirname "$0")/lib/short.sh"
 
 echo "== L0: ground truth, from Odoo directly =="
 CUSTOMERS=$(curl -s -X POST "$ODOO/json/2/res.partner/search_count" -H "Authorization: Bearer $ODOO_KEY" \
