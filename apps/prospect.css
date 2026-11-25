@@ -78,3 +78,11 @@ body { margin: 0; background: var(--o-bg); color: var(--o-text);
 .o_ext { color: var(--o-teal); text-decoration: none; font-size: 12px; }
 .o_ext:hover { text-decoration: underline; }
 .o_flash { outline: 2px solid var(--o-plum); transition: outline .2s; }
+
+/* How it works: hidden until the footer link targets it. */
+.o_howlink { color: var(--o-muted); margin-left: 6px; }
+.o_how { display: none; padding: 6px 18px 80px; font-size: 13px; color: var(--o-text, inherit); max-width: 980px; }
+.o_how:target { display: block; }
+.o_how h2 { font-size: 16px; margin: 8px 0; }
+.o_how h3 { font-size: 13.5px; margin: 14px 0 6px; }
+.o_how pre { overflow-x: auto; background: rgba(127,127,127,.08); padding: 10px; font-size: 12px; }
