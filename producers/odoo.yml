@@ -1425,6 +1425,47 @@
   maxKeysPerCall: 200
   cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
 
+# Every person filed under a company, the whole book in one paged sweep: the same records and the
+# same shape as contactsByCompany, with the company keys left out. `parent_id != false` is what
+# makes it exactly that door's reach — a person with no company is not anyone's AccountContact —
+# and is_company = false keeps subsidiaries out, as there. 5,054 people on the demo book (Odoo's
+# own search_count with this domain), six pages.
+- name: contactsAll
+  kind: api
+  operation: partnersSearchRead
+  records: "$[*]"
+  keyArg: "context.scope"
+  echoKeyAs: scopeKey
+  args:
+    domain:
+      - ["is_company", "=", false]
+      - ["parent_id", "!=", false]
+    fields: [name, email, function, phone, parent_id]
+    load: ""
+    limit: 1000
+  compute:
+    email: "CASE r.email WHEN false THEN null ELSE toLower(r.email) END"
+    function: "CASE r.function WHEN false THEN null ELSE r.function END"
+    jobTitle: "CASE r.function WHEN false THEN null ELSE r.function END"
+    phone: "CASE r.phone WHEN false THEN null ELSE r.phone END"
+    parent_id: "CASE r.parent_id WHEN false THEN null ELSE r.parent_id END"
+    sourceUrl: "'http://localhost:8069/odoo/res.partner/' + toString(r.id)"
+  # contactsByCompany's rules, and parent_id beside them, so a question about some companies' people
+  # asked through the book still asks Odoo for those companies alone.
+  pushdown:
+    - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
+    - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
+    - { property: parent_id, op: EQUALS, argPath: "domain.-", clause: ["parent_id", "=", "{value}"] }
+    - { property: parent_id, op: IN, argPath: "domain.-", clause: ["parent_id", "in", "{values}"] }
+    - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=ilike", "{value}"], valuePattern: '^([^%_]+)$', match: ci }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci }
+    - { property: function, op: CONTAINS, argPath: "domain.-", clause: ["function", "ilike", "{value}"], match: ci }
+    - { property: jobTitle, op: CONTAINS, argPath: "domain.-", clause: ["function", "ilike", "{value}"], match: ci }
+  paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
+
 # THE COMPANY HIERARCHY. On a company record Odoo's parent_id is its parent company (the
 # "Related Company" field of a company form); on a person it is their employer. One field, two
 # meanings, told apart by is_company. Every partner door therefore computes `parentCompanyId`

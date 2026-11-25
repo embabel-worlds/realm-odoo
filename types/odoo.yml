@@ -322,10 +322,23 @@
     phone: "Phone number, as typed in Odoo (no normalised format)."
     parent_id: "The company's partner id."
     sourceUrl: "Opens this person in Odoo."
+    scopeKey: "Echo of the book scope this person was fetched under."
   virtualJoins:
+    # materializedKeyField: every person contactsByCompany returns carries the company in parent_id —
+    # Odoo filtered on that very field — so a question that reaches more companies than one batched
+    # fetch may serve (every company in the book is 6,855, the cap 5,000) is answered from the
+    # contacts book below, matched on parent_id, instead of being refused.
     - { anchorLabel: OdooCustomer, relationship: HAS_ACCOUNT_CONTACT, keyField: id,
-        recordKeyField: parent_id, producer: contactsByCompany,
+        recordKeyField: parent_id, producer: contactsByCompany, materializedKeyField: parent_id,
         description: "The people Odoo files under this company — never its subsidiaries. One call for any number of companies." }
+    # THE CONTACTS BOOK: every person filed under a company, in one paged sweep. It is exactly the
+    # set HAS_ACCOUNT_CONTACT can reach from any company (is_company false, parent_id set), so a
+    # sweep matched on parent_id answers for every company at once.
+    # implicitDoor: a bare `MATCH (ct:OdooContact)` (or the vocabulary's AccountContact) takes this
+    # door, and it is what HAS_ACCOUNT_CONTACT is answered from when its companies are too many.
+    - { anchorLabel: OdooBook, relationship: HAS_CONTACT, keyField: scope,
+        recordKeyField: scopeKey, producer: contactsAll, maxFanoutTotal: 50000, implicitDoor: true,
+        description: "Every person the CRM files under a company, whichever company. The door for a question about contacts across the book." }
 
 # A chatter message. Body arrives as HTML, as Odoo stores it — a consumer doing judgment
 # (sentiment, classification) should strip tags first, not ask the model to.
