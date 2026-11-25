@@ -1003,6 +1003,46 @@
         }
       }
     },
+    "/json/2/res.partner/search_count": {
+      "post": {
+        "operationId": "partnersSearchCount",
+        "summary": "Count partners (companies and people) matching a domain \u2014 Odoo's search_count",
+        "description": "Answers the bare number of records the domain matches. Takes no page: a `limit` here is an upper bound on the count, so a listing's page size must never reach it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "domain": {
+                    "type": "array",
+                    "items": {},
+                    "description": "Odoo domain, e.g. [[\"state\",\"=\",\"posted\"]]"
+                  },
+                  "context": {
+                    "type": "object",
+                    "description": "Odoo's free-form context kwarg; the producers carry their anchor key here."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The number of matching records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/json/2/crm.lead/search_count": {
       "post": {
         "operationId": "leadsSearchCount",

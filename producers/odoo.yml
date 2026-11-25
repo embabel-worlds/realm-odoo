@@ -40,7 +40,8 @@
 #   - Text CONTAINS is `ilike`, declared `match: ci`: Odoo ignores case there, so it also answers
 #     `toLower(c.name) CONTAINS 'acme'`. `ilike` reads `%` and `_` as wildcards, which only ever
 #     WIDENS what Odoo returns; the graph re-applies the query's own comparison, so rows stay
-#     exact. That widening is also why no door declares `aggregates:` over a CONTAINS rule.
+#     exact. A count cannot be re-filtered, so the doors that declare `aggregates:` guard
+#     their `ilike` rules (see AGGREGATES below).
 #   - Dates carry a `valuePattern`. A datetime field (create_date, date_closed, start …) is UTC
 #     and Odoo compares it against 'YYYY-MM-DD' (midnight) or 'YYYY-MM-DD HH:MM:SS'; a date field
 #     (date_deadline, invoice_date_due) against 'YYYY-MM-DD' only. Those are also the spellings
@@ -208,11 +209,10 @@
     # identifies a company and a name does not, and website is Odoo's own field.
     fields: [name, email, phone, city, country_id, is_company, website, parent_id, commercial_partner_id, industry_id, user_id, customer_rank, supplier_rank]
     # No `load: ""` here, unlike every other door: see THE PARTNER DOORS at the top.
-    # NO paging, and that is safe HERE for a reason worth writing down: this is a lookup BY ID,
-    # so a chunk of `maxKeysPerCall` keys returns at most that many records — and the limit
-    # equals it. The sibling by-partner producers are TO-MANY, where one prolific partner fills
-    # the response and starves the rest of the chunk, so those page.
-    limit: 200
+    # NO paging and NO `limit`, and both are safe HERE for a reason worth writing down: this is a
+    # lookup BY ID, so a chunk of `maxKeysPerCall` keys returns at most that many records, and a
+    # cap could only ever truncate. The sibling by-partner producers are TO-MANY, where one
+    # prolific partner fills the response and starves the rest of the chunk, so those page.
   maxKeysPerCall: 200
   compute:
     email: "CASE r.email WHEN false THEN null ELSE r.email END"
@@ -480,15 +480,15 @@
     - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
     - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
     - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
-    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
     - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
-    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
     - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
-    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci }
+    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
-    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
     - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
     - { property: country_id, op: EQUALS, argPath: "domain.-", clause: ["country_id", "=", "{value}"] }
@@ -504,6 +504,19 @@
     - { property: parent_id, op: IN, argPath: "domain.-", clause: ["parent_id", "in", "{values}"] }
     - { property: relationship, op: EQUALS, argPath: "domain.-", clause: ["customer_rank", ">", 0], valuePattern: '^(customer)$' }
   paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  # HOW MANY CUSTOMERS: one search_count over the door's own domain, not a walk of the book.
+  # Exact under every rule above — each is an Odoo `=`, `in`, `>` or `ilike` the graph would
+  # apply the same way — with two exceptions the engine and the rules handle: a CONTAINS written
+  # case-sensitively is read from the records (`match: ci`), and a fragment holding `%`, `_` or
+  # `\` is filtered in the graph (`valuePattern`), since `ilike` reads them as specials.
+  aggregates:
+    - measure: count
+      operation: partnersSearchCount
+      args:
+        domain:
+          - ["customer_rank", ">", 0]
+      valueField: "$"
+      keyField: scopeKey
   cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
 
 - name: invoicesUnpaidAll
@@ -1143,15 +1156,15 @@
     - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
     - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
     - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
-    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
     - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
-    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
     - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
-    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci }
+    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
-    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
     - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
     - { property: country_id, op: EQUALS, argPath: "domain.-", clause: ["country_id", "=", "{value}"] }
@@ -1167,6 +1180,16 @@
     - { property: parent_id, op: IN, argPath: "domain.-", clause: ["parent_id", "in", "{values}"] }
     - { property: relationship, op: EQUALS, argPath: "domain.-", clause: ["customer_rank", ">", 0], valuePattern: '^(customer)$' }
   paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  # HOW MANY COMPANIES: one search_count over the door's own domain, not a walk of the book.
+  # Exact under the same rules as customersAll's count.
+  aggregates:
+    - measure: count
+      operation: partnersSearchCount
+      args:
+        domain:
+          - ["is_company", "=", true]
+      valueField: "$"
+      keyField: scopeKey
   cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
 
 # ── Back from the ACCOUNT. The business vocabulary's CustomerAccount is a spine several systems
@@ -1590,15 +1613,15 @@
     - { property: id, op: EQUALS, argPath: "domain.-", clause: ["id", "=", "{value}"] }
     - { property: id, op: IN, argPath: "domain.-", clause: ["id", "in", "{values}"] }
     - { property: name, op: EQUALS, argPath: "domain.-", clause: ["name", "=", "{value}"] }
-    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci }
+    - { property: name, op: CONTAINS, argPath: "domain.-", clause: ["name", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: name, op: IN, argPath: "domain.-", clause: ["name", "in", "{values}"] }
     - { property: email, op: EQUALS, argPath: "domain.-", clause: ["email", "=", "{value}"] }
-    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci }
+    - { property: email, op: CONTAINS, argPath: "domain.-", clause: ["email", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: email, op: IN, argPath: "domain.-", clause: ["email", "in", "{values}"] }
     - { property: city, op: EQUALS, argPath: "domain.-", clause: ["city", "=", "{value}"] }
-    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci }
+    - { property: city, op: CONTAINS, argPath: "domain.-", clause: ["city", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: website, op: EQUALS, argPath: "domain.-", clause: ["website", "=", "{value}"] }
-    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci }
+    - { property: website, op: CONTAINS, argPath: "domain.-", clause: ["website", "ilike", "{value}"], match: ci, valuePattern: '^([^%_\\]*)$' }
     - { property: phone, op: EQUALS, argPath: "domain.-", clause: ["phone", "=", "{value}"] }
     - { property: is_company, op: EQUALS, argPath: "domain.-", clause: ["is_company", "=", "{value}"] }
     - { property: country_id, op: EQUALS, argPath: "domain.-", clause: ["country_id", "=", "{value}"] }
@@ -1614,6 +1637,15 @@
     - { property: parent_id, op: IN, argPath: "domain.-", clause: ["parent_id", "in", "{values}"] }
     - { property: relationship, op: EQUALS, argPath: "domain.-", clause: ["customer_rank", ">", 0], valuePattern: '^(customer)$' }
   paging: { style: offset, param: offset, sizeParam: limit, size: 1000, maxPages: 50 }
+  # HOW MANY PARTNERS: one search_count over the door's own domain, not a walk of the book.
+  # Exact under the same rules as customersAll's count.
+  aggregates:
+    - measure: count
+      operation: partnersSearchCount
+      args:
+        domain: []
+      valueField: "$"
+      keyField: scopeKey
   cache: { kind: ttl, seconds: 900, negativeTtlSeconds: 900 }
 
 # THE WHOLE CHATTER BOOK, swept once. The per-anchor doors above (`messagesByPartner`,
